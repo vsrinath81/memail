@@ -208,6 +208,26 @@
   .modal p { font-size: 13px; color: var(--ink-2); margin-bottom: 20px; line-height: 1.6; }
   .modal-close { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: var(--ink-3); margin-top: -4px; }
 
+  /* multi-account */
+  .account-switcher { position: relative; }
+  .account-btn { display: flex; align-items: center; gap: 7px; padding: 4px 10px 4px 4px; background: var(--surface-2); border: 0.5px solid var(--border-2); border-radius: 20px; font-size: 12px; cursor: pointer; }
+  .account-btn:hover { background: var(--surface); }
+  .account-avatar { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-light); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--accent-text); flex-shrink: 0; }
+  .account-avatar.warm { background: var(--warm-light); color: var(--warm-text); }
+  .account-avatar.blue { background: var(--blue-light); color: var(--blue-text); }
+  .account-dropdown { position: absolute; top: calc(100% + 6px); right: 0; background: var(--surface-3); border: 0.5px solid var(--border-2); border-radius: var(--r); min-width: 240px; z-index: 50; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); display: none; }
+  .account-dropdown.open { display: block; }
+  .account-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.1s; border-bottom: 0.5px solid var(--border); }
+  .account-item:last-child { border-bottom: none; }
+  .account-item:hover { background: var(--surface-2); }
+  .account-item.active { background: var(--accent-light); }
+  .account-item-info { flex: 1; min-width: 0; }
+  .account-item-email { font-size: 12px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .account-item-label { font-size: 10.5px; color: var(--ink-3); }
+  .account-item-check { color: var(--accent); font-size: 14px; }
+  .account-add { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; color: var(--accent-text); font-size: 12.5px; font-weight: 500; border-top: 0.5px solid var(--border); transition: background 0.1s; }
+  .account-add:hover { background: var(--accent-light); }
+
   /* toast */
   .toast { position: fixed; bottom: 24px; right: 24px; background: var(--ink); color: white; border-radius: var(--r-sm); padding: 10px 16px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -280,11 +300,23 @@
         <div class="pulse"></div>
         <span id="memory-count">Memory active</span>
       </div>
-      <div class="user-chip">
-        <div class="user-avatar" id="user-initials">?</div>
-        <span id="user-name" style="font-size:12px;color:var(--ink-2);">Loading…</span>
+      <div class="account-switcher" id="account-switcher">
+        <div class="account-btn" onclick="toggleAccountDropdown()">
+          <div class="account-avatar" id="user-initials">?</div>
+          <span id="user-name" style="font-size:12px;color:var(--ink-2);">Loading…</span>
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+        </div>
+        <div class="account-dropdown" id="account-dropdown">
+          <div id="account-list"></div>
+          <div class="account-add" onclick="addAccount()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5"/><path d="M7 4.5v5M4.5 7h5"/></svg>
+            Add another account
+          </div>
+          <div style="border-top:0.5px solid var(--border);padding:8px 14px;">
+            <button onclick="signOutAll()" style="font-size:11px;color:var(--red-text);background:none;border:none;cursor:pointer;font-family:var(--font-ui)">Sign out all accounts</button>
+          </div>
+        </div>
       </div>
-      <button class="btn-signout" onclick="signOut()">Sign out</button>
     </div>
   </div>
 
@@ -402,8 +434,20 @@ let gapiLoaded = false, gisLoaded = false;
 let tokenClient, accessToken = null;
 let currentEmails = [], currentEmailId = null;
 let currentView = 'inbox';
-let memoryStore = {}; // senderEmail -> {summary, insights}
+let memoryStore = {};
 let draftText = '';
+
+// Multi-account support
+let accounts = []; // [{email, initials, accessToken, clientId}]
+let activeAccountIndex = 0;
+
+function loadAccounts() {
+  try { accounts = JSON.parse(localStorage.getItem('memail_accounts') || '[]'); } catch(e) { accounts = []; }
+}
+function saveAccounts() {
+  localStorage.setItem('memail_accounts', JSON.stringify(accounts.map(a => ({email:a.email, initials:a.initials, clientId:a.clientId}))));
+}
+function getActiveAccount() { return accounts[activeAccountIndex] || null; }
 
 // ── GAPI LOAD ──
 function loadGapi() {
@@ -447,6 +491,20 @@ async function startAuth() {
         gapi.client.setToken({ access_token: accessToken });
         localStorage.setItem('memail_client_id', clientId);
         localStorage.setItem('memail_api_key', document.getElementById('api-key-input')?.value.trim() || localStorage.getItem('memail_api_key') || '');
+        // Register account
+        const profileResp = await gapi.client.gmail.users.getProfile({ userId: 'me' });
+        const email = profileResp.result.emailAddress || '';
+        const initials = email.split('@')[0].slice(0,2).toUpperCase();
+        const existing = accounts.findIndex(a => a.email === email);
+        if (existing >= 0) {
+          accounts[existing].accessToken = accessToken;
+          accounts[existing].clientId = clientId;
+          activeAccountIndex = existing;
+        } else {
+          accounts.push({ email, initials, accessToken, clientId });
+          activeAccountIndex = accounts.length - 1;
+        }
+        saveAccounts();
         await launchApp();
       }
     });
@@ -473,11 +531,124 @@ async function loadUserProfile() {
   try {
     const r = await gapi.client.gmail.users.getProfile({ userId: 'me' });
     const email = r.result.emailAddress || '';
-    const name = email.split('@')[0];
-    const initials = name.slice(0,2).toUpperCase();
+    const initials = email.slice(0,2).toUpperCase();
     document.getElementById('user-initials').textContent = initials;
     document.getElementById('user-name').textContent = email;
+    renderAccountList();
   } catch(e) { console.error(e); }
+}
+
+function renderAccountList() {
+  const list = document.getElementById('account-list');
+  if (!list) return;
+  list.innerHTML = accounts.map((a,i) => `
+    <div class="account-item${i===activeAccountIndex?' active':''}" onclick="switchAccount(${i})">
+      <div class="account-avatar${i===1?' warm':i===2?' blue':''}">${a.initials}</div>
+      <div class="account-item-info">
+        <div class="account-item-email">${a.email}</div>
+        <div class="account-item-label">${i===activeAccountIndex?'Active':'Click to switch'}</div>
+      </div>
+      ${i===activeAccountIndex?'<span class="account-item-check">✓</span>':''}
+    </div>
+  `).join('');
+}
+
+function toggleAccountDropdown() {
+  const dd = document.getElementById('account-dropdown');
+  dd.classList.toggle('open');
+  renderAccountList();
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('account-switcher')?.contains(e.target)) {
+    document.getElementById('account-dropdown')?.classList.remove('open');
+  }
+});
+
+async function switchAccount(idx) {
+  if (idx === activeAccountIndex) { toggleAccountDropdown(); return; }
+  activeAccountIndex = idx;
+  const account = accounts[idx];
+  document.getElementById('account-dropdown').classList.remove('open');
+  showToast('Switching to ' + account.email + '…');
+
+  // Re-auth with stored client ID for this account
+  accessToken = account.accessToken;
+  if (accessToken) {
+    gapi.client.setToken({ access_token: accessToken });
+    document.getElementById('user-initials').textContent = account.initials;
+    document.getElementById('user-name').textContent = account.email;
+    renderAccountList();
+    await loadInbox();
+  } else {
+    // Need to re-authenticate
+    const clientId = account.clientId || localStorage.getItem('memail_client_id');
+    if (clientId) {
+      const tc = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: GMAIL_SCOPE,
+        hint: account.email,
+        callback: async (resp) => {
+          if (resp.error) { showToast('Auth failed for ' + account.email); return; }
+          accounts[idx].accessToken = resp.access_token;
+          accessToken = resp.access_token;
+          gapi.client.setToken({ access_token: accessToken });
+          saveAccounts();
+          document.getElementById('user-initials').textContent = account.initials;
+          document.getElementById('user-name').textContent = account.email;
+          renderAccountList();
+          await loadInbox();
+        }
+      });
+      tc.requestAccessToken();
+    }
+  }
+}
+
+async function addAccount() {
+  document.getElementById('account-dropdown').classList.remove('open');
+  // Sign out current token so Google shows account picker
+  const clientId = localStorage.getItem('memail_client_id');
+  if (!clientId) { showToast('No client ID found'); return; }
+  showToast('Opening Google sign-in…');
+  const tc = google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: GMAIL_SCOPE,
+    callback: async (resp) => {
+      if (resp.error) { showToast('Could not add account'); return; }
+      const newToken = resp.access_token;
+      gapi.client.setToken({ access_token: newToken });
+      const profileResp = await gapi.client.gmail.users.getProfile({ userId: 'me' });
+      const email = profileResp.result.emailAddress || '';
+      const initials = email.slice(0,2).toUpperCase();
+      const existing = accounts.findIndex(a => a.email === email);
+      if (existing >= 0) {
+        showToast(email + ' already added');
+        activeAccountIndex = existing;
+        accounts[existing].accessToken = newToken;
+      } else {
+        accounts.push({ email, initials, accessToken: newToken, clientId });
+        activeAccountIndex = accounts.length - 1;
+        showToast('Added ' + email);
+      }
+      accessToken = newToken;
+      saveAccounts();
+      document.getElementById('user-initials').textContent = initials;
+      document.getElementById('user-name').textContent = email;
+      renderAccountList();
+      await loadInbox();
+    }
+  });
+  tc.requestAccessToken();
+}
+
+function signOutAll() {
+  accounts.forEach(a => { if (a.accessToken) google.accounts.oauth2.revoke(a.accessToken); });
+  accounts = [];
+  activeAccountIndex = 0;
+  localStorage.removeItem('memail_accounts');
+  signOut();
 }
 
 // ── EMAIL LOADING ──
@@ -1048,6 +1219,8 @@ function refreshCurrentView() {
 function signOut() {
   if (accessToken) google.accounts.oauth2.revoke(accessToken);
   accessToken = null;
+  accounts = [];
+  localStorage.removeItem('memail_accounts');
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
   document.getElementById('auth-btn').disabled = false;
@@ -1069,6 +1242,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedId) document.getElementById('client-id-input').value = savedId;
   const savedKey = localStorage.getItem('memail_api_key');
   if (savedKey) document.getElementById('api-key-input').value = savedKey;
+  loadAccounts();
 });
 </script>
 </body>
