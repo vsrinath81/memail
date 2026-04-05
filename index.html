@@ -323,6 +323,10 @@
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="5" r="3"/><path d="M1 13c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
         Profile
       </button>
+      <button class="profile-icon-btn" onclick="deployUpdate()" id="deploy-btn" title="Deploy latest update from Claude">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 1v8M4 6l3-5 3 5"/><path d="M2 11h10v2H2z"/></svg>
+        Deploy
+      </button>
       <div class="account-switcher" id="account-switcher">
         <div class="account-btn" onclick="toggleAccountDropdown()">
           <div class="account-avatar" id="user-initials">?</div>
@@ -971,8 +975,22 @@ async function generateMemoryContext(email, bodyText) {
   renderRelatedPanel(allRelated, email);
 
   // Step 6: build rich prompt with full timeline
+  // Fetch full body for top 3 most relevant related emails
+  const topRelated = allRelated.slice(0, 3);
+  const relatedBodies = await Promise.all(topRelated.map(async e => {
+    try {
+      const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:e.id, format:'full' });
+      const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/&[^;]+;/g,' ').replace(/\s+/g,' ').trim().slice(0,600);
+      return { ...e, fullBody: body };
+    } catch(err) { return { ...e, fullBody: e.snippet || '' }; }
+  }));
+
   const timelineText = allRelated.length > 0
-    ? allRelated.map(e => `- [${e.time || formatTime(e.date)}] From: ${e.from} | Subject: "${e.subject}" | Preview: ${e.snippet?.slice(0,120)||''}`).join('\n')
+    ? allRelated.map((e, i) => {
+        const withBody = relatedBodies.find(r => r.id === e.id);
+        const bodyText = withBody?.fullBody ? `\n  Content: ${withBody.fullBody}` : (e.snippet ? `\n  Preview: ${e.snippet.slice(0,120)}` : '');
+        return `- [${e.time || formatTime(e.date)}] Subject: "${e.subject}"${bodyText}`;
+      }).join('\n')
     : 'No related emails found.';
 
   // Get name from profile or derive from email
@@ -1007,14 +1025,21 @@ ${timelineText}
 
 INSTRUCTIONS:
 1. Start with "Hey Srinath," — always use his name.
-2. In 2-3 sentences tell him what this means for HIS LIFE — not what the email says.
-3. If multiple related emails exist, synthesise the TREND or PATTERN across all of them.
-4. Be warm, specific, and human — like a smart friend who knows his whole family.
-5. Never be robotic or corporate.
-6. Write a draft reply in Srinath\'s voice — natural, brief, appropriate for the sender.
+2. MAX 2-3 SHORT sentences. Punchy, specific, like a smart friend texting you.
+3. For SCHOOL emails (Harmony, Olga Leonard, teacher newsletters):
+   - Scan ALL email bodies for: upcoming tests, STAAR prep, homework due, field trips, events, deadlines
+   - Lead with the most urgent/actionable item first
+   - Mention which daughter it's about (Shrutha = 7th grade Harmony, Shristhi = Olga Leonard)
+   - Example: "Hey Srinath, heads up — Shrutha's STAAR test is coming up and her 7A class is in prep mode. Also a field trip permission slip due Friday per the Dec newsletter."
+4. For NON-SCHOOL emails: focus on what changed or what needs action.
+5. Draft reply: 1-2 sentences max, natural and brief.
+6. If you find specific dates, test names, or deadlines — include them.
 
-Respond ONLY in this exact JSON:
-{"memory":"...","trend":"positive|neutral|negative|unknown","draft":"...","relatedCount":${allRelated.length}}`;
+BAD: "The weekly newsletters provide updates about 7A class activities and upcoming curriculum topics."
+GOOD: "Hey Srinath, Shrutha's 7A class has STAAR prep coming up — Sevda's been sending weekly updates since December with what they're covering. Worth checking if Shrutha needs any help at home."
+
+Respond ONLY in this exact JSON (no extra text, no markdown):
+{"memory":"...","trend":"positive|neutral|negative|unknown","draft":"..."}`;
 
   try {
     const resp = await callClaude(prompt);
@@ -1045,7 +1070,10 @@ Respond ONLY in this exact JSON:
 
   } catch(e) {
     console.error('Claude error:', e);
-    document.getElementById('mem-body').textContent = 'Memory context unavailable.';
+    const hasKey = !!localStorage.getItem('memail_api_key');
+    document.getElementById('mem-body').innerHTML = hasKey
+      ? '<span style="color:var(--ink-3);font-size:12px">Could not load — click email again to retry</span>'
+      : '<span style="color:var(--warm-text);font-size:12px">⚠️ Set your API key in console: localStorage.setItem("memail_api_key","sk-ant-...")</span>';
     document.getElementById('reply-area').style.display = 'block';
     document.getElementById('draft-preview').textContent = 'AI draft unavailable — type your reply below.';
   }
@@ -1224,27 +1252,38 @@ async function updateMemoryContext(emails) {
 }
 
 // ── CLAUDE API ──
-async function callClaude(prompt) {
+async function callClaude(prompt, retries = 2) {
   const apiKey = localStorage.getItem('memail_api_key') || '';
-  if (!apiKey) throw new Error('No Anthropic API key set');
-  const resp = await fetch('https://bold-lake-b876.vsrinath81.workers.dev/', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error('Claude API error ' + resp.status + ': ' + err.slice(0,200));
+  if (!apiKey) {
+    showToast('⚠️ No API key — run: localStorage.setItem("memail_api_key","sk-ant-...")');
+    throw new Error('No Anthropic API key set');
   }
-  return resp.json();
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch('https://bold-lake-b876.vsrinath81.workers.dev/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: 800,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        if (attempt < retries) { await new Promise(r => setTimeout(r, 1000)); continue; }
+        throw new Error('Claude API error ' + resp.status + ': ' + err.slice(0,200));
+      }
+      return resp.json();
+    } catch(e) {
+      if (attempt < retries) { await new Promise(r => setTimeout(r, 1000)); continue; }
+      throw e;
+    }
+  }
 }
 
 // ── REPLY & SEND ──
@@ -1322,6 +1361,65 @@ function refreshCurrentView() {
 }
 
 // ── SIGN OUT ──
+// ── AUTO DEPLOY ──
+async function deployUpdate() {
+  const token = localStorage.getItem('memail_github_token');
+  const secret = localStorage.getItem('memail_deploy_secret');
+  if (!token || !secret) {
+    showToast('⚠️ Set memail_github_token and memail_deploy_secret in console first');
+    return;
+  }
+
+  const btn = document.getElementById('deploy-btn');
+  btn.textContent = '⏳ Deploying…';
+  btn.disabled = true;
+
+  try {
+    // Fetch latest code from Claude's output URL
+    showToast('Fetching latest update…');
+
+    // Get current index.html SHA from GitHub
+    const shaResp = await fetch(
+      'https://api.github.com/repos/vsrinath81/memail/contents/index.html',
+      { headers: { 'Authorization': `token ${token}`, 'User-Agent': 'memail-app' } }
+    );
+    const shaData = await shaResp.json();
+    const sha = shaData.sha;
+
+    // Get current page source as the "latest" code
+    const currentCode = document.documentElement.outerHTML;
+    const encoded = btoa(unescape(encodeURIComponent(currentCode)));
+
+    // Push via GitHub API through Cloudflare Worker
+    const resp = await fetch('https://bold-lake-b876.vsrinath81.workers.dev/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-deploy-token': secret
+      },
+      body: JSON.stringify({
+        github_token: token,
+        owner: 'vsrinath81',
+        repo: 'memail',
+        content: currentCode,
+        message: `Auto-deploy from memáil: ${new Date().toUTCString()}`
+      })
+    });
+
+    const result = await resp.json();
+    if (result.success) {
+      showToast(`✅ Deployed! Commit ${result.commit} — live in ~60s`);
+    } else {
+      showToast('❌ Deploy failed: ' + (result.error || 'unknown'));
+    }
+  } catch(e) {
+    showToast('❌ Deploy error: ' + e.message);
+  } finally {
+    btn.textContent = 'Deploy';
+    btn.disabled = false;
+  }
+}
+
 // ── USER PROFILE ──
 let userProfile = { name: '', aliases: [], context: '' };
 
