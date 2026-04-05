@@ -337,8 +337,25 @@
       Drafts
     </div>
 
-    <div class="nav-label" style="margin-top:8px">AI Views</div>
-    <div class="nav-item" onclick="loadImportant()">
+    <div class="nav-label" style="margin-top:8px">Gmail tabs</div>
+    <div class="nav-item" onclick="loadCategory('primary')" id="nav-primary">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="2" width="12" height="10" rx="1.5"/><path d="M1 5l6 4 6-4"/></svg>
+      Primary
+    </div>
+    <div class="nav-item" onclick="loadCategory('social')" id="nav-social">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="5" cy="5" r="2.5"/><circle cx="10" cy="8" r="2"/><path d="M7.5 5.5c.5-.3 1.2-.5 2-.5"/></svg>
+      Social
+    </div>
+    <div class="nav-item" onclick="loadCategory('promotions')" id="nav-promotions">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h10v6a1 1 0 01-1 1H3a1 1 0 01-1-1V4z"/><path d="M2 4l5 4 5-4"/><path d="M5 1h4"/></svg>
+      Promotions
+    </div>
+    <div class="nav-item" onclick="loadCategory('updates')" id="nav-updates">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="5"/><path d="M7 4v3l2 2"/></svg>
+      Updates
+    </div>
+    <div class="nav-label" style="margin-top:8px">AI views</div>
+    <div class="nav-item" onclick="loadImportant()" id="nav-important">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 1l1.6 3.3L12 5l-2.5 2.4.6 3.4L7 9.2 3.9 10.8l.6-3.4L2 5l3.4-.7z"/></svg>
       Needs action
     </div>
@@ -524,7 +541,7 @@ async function launchApp() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'grid';
   await loadUserProfile();
-  await loadInbox();
+  await loadCategory('primary');
 }
 
 async function loadUserProfile() {
@@ -656,27 +673,48 @@ async function loadInbox() {
   currentView = 'inbox';
   document.getElementById('list-title').textContent = 'Inbox';
   setNavActive('nav-inbox');
-  await fetchEmails('in:inbox', 25);
+  await fetchEmails('in:inbox category:primary', 25);
 }
 async function loadSent() {
   currentView = 'sent';
   document.getElementById('list-title').textContent = 'Sent';
+  setNavActive(null);
   await fetchEmails('in:sent', 20);
 }
 async function loadDrafts() {
   currentView = 'drafts';
   document.getElementById('list-title').textContent = 'Drafts';
+  setNavActive(null);
   await fetchEmails('in:drafts', 15);
 }
 async function loadImportant() {
   currentView = 'important';
   document.getElementById('list-title').textContent = 'Needs action';
-  await fetchEmails('in:inbox is:unread', 20);
+  setNavActive('nav-important');
+  await fetchEmails('in:inbox is:unread is:important', 20);
 }
 async function loadPeople() {
   currentView = 'people';
   document.getElementById('list-title').textContent = 'People memory';
+  setNavActive(null);
   await fetchEmails('in:inbox', 30);
+}
+
+// Gmail category tabs
+const CATEGORIES = {
+  primary:    { query: 'in:inbox category:primary',    label: 'Primary',    nav: 'nav-primary' },
+  social:     { query: 'in:inbox category:social',     label: 'Social',     nav: 'nav-social' },
+  promotions: { query: 'in:inbox category:promotions', label: 'Promotions', nav: 'nav-promotions' },
+  updates:    { query: 'in:inbox category:updates',    label: 'Updates',    nav: 'nav-updates' },
+};
+
+async function loadCategory(cat) {
+  const c = CATEGORIES[cat];
+  if (!c) return;
+  currentView = cat;
+  document.getElementById('list-title').textContent = c.label;
+  setNavActive(c.nav);
+  await fetchEmails(c.query, 25);
 }
 
 function setNavActive(id) {
@@ -1213,6 +1251,7 @@ function refreshCurrentView() {
   else if (currentView === 'drafts') loadDrafts();
   else if (currentView === 'important') loadImportant();
   else if (currentView === 'people') loadPeople();
+  else if (CATEGORIES[currentView]) loadCategory(currentView);
 }
 
 // ── SIGN OUT ──
