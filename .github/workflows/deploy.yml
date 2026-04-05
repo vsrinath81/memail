@@ -1,0 +1,19 @@
+name: Auto-deploy from Claude
+on:
+  push:
+    paths: ['_claude_deploy.html']
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Promote to index.html
+        run: |
+          cp _claude_deploy.html index.html
+          git config user.email "claude-deploy@memail.app"
+          git config user.name "Claude Auto-Deploy"
+          git add index.html
+          git commit -m "Auto-deploy: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
