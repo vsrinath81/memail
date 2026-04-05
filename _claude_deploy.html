@@ -228,6 +228,22 @@
   .account-add { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; color: var(--accent-text); font-size: 12.5px; font-weight: 500; border-top: 0.5px solid var(--border); transition: background 0.1s; }
   .account-add:hover { background: var(--accent-light); }
 
+  /* memory store */
+  .memory-setup-overlay { position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;display:none;align-items:center;justify-content:center; }
+  .memory-setup-overlay.open { display:flex; }
+  .memory-setup-card { background:var(--surface-3);border-radius:16px;padding:32px 36px;width:100%;max-width:500px;text-align:center; }
+  .memory-setup-card h2 { font-family:var(--font-display);font-size:24px;margin-bottom:8px; }
+  .memory-setup-card p { font-size:13px;color:var(--ink-2);margin-bottom:24px;line-height:1.6; }
+  .memory-progress { background:var(--surface-2);border-radius:20px;height:6px;margin:16px 0;overflow:hidden; }
+  .memory-progress-bar { height:100%;background:var(--accent);border-radius:20px;transition:width 0.3s;width:0%; }
+  .memory-stat { display:inline-block;background:var(--accent-light);color:var(--accent-text);border-radius:8px;padding:6px 14px;font-size:12px;font-weight:500;margin:4px; }
+  .life-event-card { background:var(--surface-3);border:0.5px solid var(--border);border-radius:var(--r);padding:10px 13px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px; }
+  .life-event-icon { width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px; }
+  .life-event-body { flex:1;min-width:0; }
+  .life-event-title { font-size:12.5px;font-weight:500;color:var(--ink); }
+  .life-event-detail { font-size:11px;color:var(--ink-3);margin-top:2px; }
+  .life-event-date { font-size:10px;color:var(--ink-3);font-family:var(--font-mono);flex-shrink:0; }
+
   /* profile modal */
   .profile-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: none; align-items: center; justify-content: center; }
   .profile-modal-overlay.open { display: flex; }
@@ -466,6 +482,17 @@
 </div>
 
 <!-- Toast -->
+<!-- MEMORY SETUP OVERLAY -->
+<div class="memory-setup-overlay" id="memory-setup-overlay">
+  <div class="memory-setup-card">
+    <h2>Building your memory</h2>
+    <p id="memory-setup-msg">Scanning your sent emails to learn your relationships, writing style, and life events…</p>
+    <div class="memory-progress"><div class="memory-progress-bar" id="memory-progress-bar"></div></div>
+    <div id="memory-setup-stats" style="margin-top:12px;"></div>
+    <button id="memory-setup-close" onclick="closeMemorySetup()" style="display:none;margin-top:16px;padding:10px 24px;background:var(--accent);color:white;border:none;border-radius:var(--r-sm);font-family:var(--font-ui);font-size:13px;font-weight:500;cursor:pointer;">Done — view my profile</button>
+  </div>
+</div>
+
 <!-- PROFILE MODAL -->
 <div class="profile-modal-overlay" id="profile-modal-overlay" onclick="closeProfileIfOutside(event)">
   <div class="profile-modal">
@@ -492,6 +519,13 @@
       <textarea id="profile-context" placeholder="e.g. I bought a home in Katy TX in 2022 so Zillow emails are just for fun. I have a daughter named Shrutha at Harmony Public Schools. I work in tech and am open to senior delivery manager roles."></textarea>
     </div>
 
+    <div style="margin-top:16px;padding-top:16px;border-top:0.5px solid var(--border);">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--ink-3);margin-bottom:8px;">AI profile builder</div>
+      <p style="font-size:12px;color:var(--ink-2);margin-bottom:10px;line-height:1.5;">Let memáil scan your sent emails to automatically learn your relationships, writing style, and life events — doctor visits, car service, birthdays and more.</p>
+      <button onclick="startSentScan()" style="width:100%;padding:10px;background:var(--warm-light);color:var(--warm-text);border:0.5px solid rgba(180,83,9,0.2);border-radius:var(--r-sm);font-family:var(--font-ui);font-size:13px;font-weight:500;cursor:pointer;margin-bottom:8px;">
+        Scan sent emails to enrich profile
+      </button>
+    </div>
     <button class="profile-save-btn" onclick="saveProfile()">Save profile</button>
     <button onclick="closeProfile()" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-3);font-family:var(--font-ui);font-size:13px;cursor:pointer;padding:6px">Cancel</button>
   </div>
@@ -599,6 +633,7 @@ async function launchApp() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'grid';
   await loadUserProfile();
+  renderLifeEventsSidebar();
   await loadCategory('primary');
 }
 
@@ -1500,6 +1535,207 @@ function refreshCurrentView() {
 }
 
 // ── SIGN OUT ──
+// ── PERSISTENT MEMORY STORE ──
+const MEMORY_KEY = 'memail_persistent_memory';
+
+function getMemory() {
+  try { return JSON.parse(localStorage.getItem(MEMORY_KEY) || '{}'); } catch(e) { return {}; }
+}
+
+function saveMemory(data) {
+  const mem = getMemory();
+  const updated = { ...mem, ...data, lastUpdated: new Date().toISOString() };
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(updated));
+}
+
+function addPersonMemory(email, data) {
+  const mem = getMemory();
+  if (!mem.people) mem.people = {};
+  if (!mem.people[email]) mem.people[email] = { interactions: 0, firstSeen: new Date().toISOString() };
+  mem.people[email] = { ...mem.people[email], ...data, lastUpdated: new Date().toISOString() };
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(mem));
+}
+
+function addLifeEvent(event) {
+  const mem = getMemory();
+  if (!mem.lifeEvents) mem.lifeEvents = [];
+  // Dedupe by title+date
+  const exists = mem.lifeEvents.find(e => e.title === event.title && e.date === event.date);
+  if (!exists) mem.lifeEvents.push({ ...event, addedAt: new Date().toISOString() });
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(mem));
+}
+
+function getUpcomingEvents(days = 30) {
+  const mem = getMemory();
+  if (!mem.lifeEvents) return [];
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + days * 86400000);
+  return (mem.lifeEvents || [])
+    .filter(e => { const d = new Date(e.date); return d >= now && d <= cutoff; })
+    .sort((a,b) => new Date(a.date) - new Date(b.date));
+}
+
+// ── SENT EMAIL SCAN ──
+async function startSentScan() {
+  closeProfile();
+  document.getElementById('memory-setup-overlay').classList.add('open');
+  document.getElementById('memory-progress-bar').style.width = '0%';
+  document.getElementById('memory-setup-close').style.display = 'none';
+  document.getElementById('memory-setup-stats').innerHTML = '';
+
+  try {
+    // Fetch sent emails
+    updateScanMsg('Fetching your sent emails…', 10);
+    const sentResp = await gapi.client.gmail.users.messages.list({
+      userId: 'me', q: 'in:sent', maxResults: 100
+    });
+    const messages = sentResp.result.messages || [];
+    updateScanMsg(`Found ${messages.length} sent emails — analysing…`, 20);
+
+    // Fetch metadata in batches
+    const details = [];
+    for (let i = 0; i < messages.length; i += 10) {
+      const batch = messages.slice(i, i+10);
+      const fetched = await Promise.all(batch.map(m =>
+        gapi.client.gmail.users.messages.get({ userId:'me', id:m.id, format:'metadata', metadataHeaders:['Subject','From','To','Date'] })
+      ));
+      details.push(...fetched.map(r => r.result));
+      const pct = 20 + Math.round((i/messages.length) * 30);
+      updateScanMsg(`Reading sent emails… ${i+10}/${messages.length}`, pct);
+    }
+
+    // Build relationship map from sent emails
+    updateScanMsg('Building your relationship map…', 55);
+    const recipients = {};
+    details.forEach(msg => {
+      const headers = msg.payload?.headers || [];
+      const to = headers.find(h => h.name === 'To')?.value || '';
+      const subject = headers.find(h => h.name === 'Subject')?.value || '';
+      const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
+      // Extract emails from To field
+      const emails = to.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+      emails.forEach(email => {
+        if (!recipients[email]) recipients[email] = { count: 0, subjects: [], lastContacted: null };
+        recipients[email].count++;
+        recipients[email].subjects.push(subject.slice(0,50));
+        if (!recipients[email].lastContacted || date > new Date(recipients[email].lastContacted)) {
+          recipients[email].lastContacted = date.toISOString();
+        }
+      });
+    });
+
+    // Save top relationships
+    const topRecipients = Object.entries(recipients)
+      .sort((a,b) => b[1].count - a[1].count)
+      .slice(0, 20);
+    topRecipients.forEach(([email, data]) => {
+      addPersonMemory(email, { sentCount: data.count, lastContacted: data.lastContacted, recentSubjects: data.subjects.slice(0,5) });
+    });
+
+    updateScanMsg('Extracting life events from sent emails…', 70);
+
+    // Fetch full body of top 30 sent emails to find life events
+    const topSent = details.slice(0, 30);
+    const lifeEventKeywords = {
+      medical: ['appointment', 'doctor', 'dr.', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab results', 'checkup', 'dental', 'optometrist'],
+      automotive: ['car service', 'oil change', 'tire', 'vehicle', 'mechanic', 'auto', 'dealership', 'registration'],
+      financial: ['insurance', 'renewal', 'subscription', 'payment due', 'invoice', 'tax', 'policy'],
+      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'party', 'celebration'],
+      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'maintenance', 'warranty']
+    };
+
+    let eventsFound = 0;
+    for (const msg of topSent.slice(0, 15)) {
+      try {
+        const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+        const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,500);
+        const subject = full.result.payload?.headers?.find(h=>h.name==='Subject')?.value || '';
+        const date = new Date(full.result.internalDate*1);
+
+        // Check for life event keywords
+        const combined = (subject + ' ' + body).toLowerCase();
+        for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
+          if (keywords.some(k => combined.includes(k))) {
+            addLifeEvent({
+              title: subject.slice(0,60),
+              category,
+              date: date.toISOString(),
+              snippet: body.slice(0,100),
+              source: 'sent'
+            });
+            eventsFound++;
+            break;
+          }
+        }
+      } catch(e) { /* skip */ }
+    }
+
+    updateScanMsg('Analysing patterns with AI…', 85);
+
+    // Send top relationships to Claude for insight
+    const topNames = topRecipients.slice(0,10).map(([email, d]) => `${email} (${d.count} emails)`).join(', ');
+    try {
+      const insightResp = await callClaude(`Based on these sent email patterns for ${document.getElementById('user-name')?.textContent || 'the user'}, write 2-3 sentences of insight about their communication style and key relationships. Be warm and personal.
+
+Top recipients: ${topNames}
+Total sent emails analysed: ${details.length}
+
+Respond in JSON: {"insight":"...","writingStyle":"...","topRelationship":"..."}`);
+
+      const insightText = insightResp.content?.[0]?.text || '{}';
+      const insight = JSON.parse(insightText.replace(/```json|```/g,'').trim());
+      saveMemory({ sentInsight: insight, sentScanDate: new Date().toISOString(), sentCount: details.length, relationshipCount: topRecipients.length });
+
+      updateScanMsg('Done!', 100);
+
+      // Show results
+      document.getElementById('memory-setup-stats').innerHTML = `
+        <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-bottom:12px;">
+          <span class="memory-stat">${details.length} sent emails scanned</span>
+          <span class="memory-stat">${topRecipients.length} relationships mapped</span>
+          <span class="memory-stat">${eventsFound} life events found</span>
+        </div>
+        <p style="font-size:12.5px;color:var(--ink-2);line-height:1.6;text-align:left;background:var(--accent-light);border-radius:8px;padding:10px 13px;">${insight.insight || 'Profile enriched successfully.'}</p>
+      `;
+    } catch(e) {
+      saveMemory({ sentScanDate: new Date().toISOString(), sentCount: details.length });
+      document.getElementById('memory-setup-stats').innerHTML = `<span class="memory-stat">${details.length} sent emails scanned</span> <span class="memory-stat">${topRecipients.length} relationships mapped</span> <span class="memory-stat">${eventsFound} life events found</span>`;
+    }
+
+    document.getElementById('memory-setup-close').style.display = 'inline-block';
+
+  } catch(e) {
+    updateScanMsg('Error: ' + e.message, 0);
+    document.getElementById('memory-setup-close').style.display = 'inline-block';
+  }
+}
+
+function updateScanMsg(msg, pct) {
+  document.getElementById('memory-setup-msg').textContent = msg;
+  document.getElementById('memory-progress-bar').style.width = pct + '%';
+}
+
+function closeMemorySetup() {
+  document.getElementById('memory-setup-overlay').classList.remove('open');
+  // Show life events in sidebar if found
+  renderLifeEventsSidebar();
+}
+
+function renderLifeEventsSidebar() {
+  const events = getUpcomingEvents(30);
+  if (!events.length) return;
+  const chips = document.getElementById('context-chips');
+  if (!chips) return;
+  events.slice(0,3).forEach(e => {
+    const chip = document.createElement('span');
+    chip.className = 'mem-chip chip-w';
+    const daysAway = Math.ceil((new Date(e.date) - new Date()) / 86400000);
+    chip.textContent = e.title.slice(0,20) + (daysAway <= 7 ? ' ⚡' : '');
+    chip.title = e.title + ' — ' + new Date(e.date).toLocaleDateString();
+    chips.appendChild(chip);
+  });
+}
+
 // ── AUTO DEPLOY ──
 async function deployUpdate() {
   const token = localStorage.getItem('memail_github_token');
@@ -1638,10 +1874,17 @@ function renderAliases() {
 
 function getProfileContext() {
   loadProfile();
+  const mem = getMemory();
   const parts = [];
   if (userProfile.name) parts.push(`User's name: ${userProfile.name}`);
   if (userProfile.aliases.length) parts.push(`All email addresses belonging to this user: ${userProfile.aliases.join(', ')}`);
   if (userProfile.context) parts.push(`Life context: ${userProfile.context}`);
+  if (mem.sentInsight?.insight) parts.push(`Communication insight from sent emails: ${mem.sentInsight.insight}`);
+  if (mem.sentInsight?.topRelationship) parts.push(`Most important relationship: ${mem.sentInsight.topRelationship}`);
+  const upcomingEvents = getUpcomingEvents(14);
+  if (upcomingEvents.length) {
+    parts.push(`Upcoming life events (next 14 days): ${upcomingEvents.map(e => e.title + ' (' + new Date(e.date).toLocaleDateString() + ')').join(', ')}`);
+  }
   return parts.join('\n');
 }
 
