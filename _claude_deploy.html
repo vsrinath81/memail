@@ -916,18 +916,61 @@ async function openEmail(idx) {
     }
 
     // Classify email before spending API credits
-    const emailClass = classifyEmail(email, body);
+    // Check user-defined sender rules first
+    const senderRule = getSenderRule(email.fromEmail || '');
+    let emailClass;
+    if (senderRule === 'always') {
+      emailClass = { skip: false };
+    } else if (senderRule === 'never') {
+      archiveEmail();
+      return;
+    } else {
+      emailClass = classifyEmail(email, body);
+    }
     if (emailClass.skip) {
       document.getElementById('mem-title').textContent = emailClass.label;
       document.getElementById('mem-body').innerHTML = emailClass.reason;
       document.getElementById('mem-strip').style.background = emailClass.bg;
       document.getElementById('mem-strip').style.borderColor = emailClass.border;
       // Add force AI button
-      const forceBtn = document.createElement('button');
-      forceBtn.textContent = 'Analyse anyway';
-      forceBtn.style.cssText = 'margin-top:6px;font-size:10px;background:none;border:0.5px solid var(--border-2);border-radius:4px;padding:3px 8px;cursor:pointer;font-family:var(--font-ui);color:var(--ink-3);';
-      forceBtn.onclick = () => { forceBtn.remove(); generateMemoryContext(email, body); };
-      document.getElementById('mem-body').appendChild(forceBtn);
+      // Smart action buttons
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;';
+
+      const btnStyle = 'font-size:10px;background:none;border:0.5px solid var(--border-2);border-radius:4px;padding:3px 8px;cursor:pointer;font-family:var(--font-ui);color:var(--ink-2);transition:background 0.1s;';
+
+      // Analyse anyway
+      const analyseBtn = document.createElement('button');
+      analyseBtn.textContent = 'Analyse anyway';
+      analyseBtn.style.cssText = btnStyle;
+      analyseBtn.onclick = () => { btnRow.remove(); generateMemoryContext(email, body); };
+
+      // Always analyse from this sender
+      const alwaysBtn = document.createElement('button');
+      alwaysBtn.textContent = 'Always analyse from ' + (email.from || email.fromEmail).split(' ')[0];
+      alwaysBtn.style.cssText = btnStyle + 'color:var(--accent-text);border-color:rgba(22,101,52,0.3);';
+      alwaysBtn.onclick = () => {
+        addSenderRule(email.fromEmail, 'always');
+        btnRow.remove();
+        generateMemoryContext(email, body);
+        showToast('Got it — will always analyse emails from ' + email.fromEmail);
+      };
+
+      // Never show from this sender
+      const neverBtn = document.createElement('button');
+      neverBtn.textContent = 'Unsubscribe / hide sender';
+      neverBtn.style.cssText = btnStyle + 'color:var(--red-text);border-color:rgba(220,38,38,0.2);';
+      neverBtn.onclick = () => {
+        addSenderRule(email.fromEmail, 'never');
+        btnRow.remove();
+        showToast('Hidden — emails from ' + email.fromEmail + ' will be auto-archived');
+        archiveEmail();
+      };
+
+      btnRow.appendChild(analyseBtn);
+      btnRow.appendChild(alwaysBtn);
+      btnRow.appendChild(neverBtn);
+      document.getElementById('mem-body').appendChild(btnRow);
     } else {
       await generateMemoryContext(email, body);
     }
@@ -973,9 +1016,9 @@ function classifyEmail(email, bodyText) {
   const body = bodyText.replace(/<[^>]+>/g,' ').toLowerCase().slice(0,500);
 
   // Known spam/promotional senders
-  const spamDomains = ['dominos','pizzahut','michaels','nellis','groupon','offers.','deals.','marketing.','promo.','newsletter.','noreply.','no-reply.','notifications.','bounce.','mailer.','bulk.','campaign.'];
+  const spamDomains = ['dominos','pizzahut','michaels','nellis','groupon','offers.','deals.','marketing.','promo.','newsletter.','noreply.','no-reply.','notifications.','bounce.','mailer.','bulk.','campaign.','msn','microsoft.com','email2.microsoft','email.msn','unfold'];
   const spamSubjects = ['% off','sale ends','last chance','limited time','exclusive deal','unsubscribe','click here','act now','free shipping','coupon','promo code','special offer','flash sale','today only'];
-  const newsSubjects = ['msn unfold','morning briefing','daily digest','weekly digest','newsletter','round-up','roundup','top stories','breaking news'];
+  const newsSubjects = ['msn unfold','morning briefing','daily digest','weekly digest','newsletter','round-up','roundup','top stories','breaking news','week','catch up','this week','today in','daily update','news update','headlines'];
   const notificationSubjects = ['run failed','run succeeded','build failed','deployment','your receipt','order confirmation','payment received','invoice','subscription','account statement'];
   const securitySubjects = ['security alert','sign-in attempt','unusual activity','verify your','confirm your email','password reset','two-factor','2fa'];
 
@@ -998,7 +1041,7 @@ function classifyEmail(email, bodyText) {
   if (isGithub && !subject.includes('security')) return {
     skip: true,
     label: 'GitHub notification',
-    reason: '<span style="font-size:12px;color:var(--ink-3)">Automated GitHub notification — workflow run or repo activity. No action needed unless it's a failure.</span>',
+    reason: `<span style="font-size:12px;color:var(--ink-3)">Automated GitHub notification — workflow run or repo activity. No action needed unless it's a failure.</span>`,
     bg: '#f1f5f9', border: 'rgba(0,0,0,0.08)'
   };
 
@@ -1006,7 +1049,7 @@ function classifyEmail(email, bodyText) {
   if (isSpamDomain || isSpamSubject || isLinkedinPromo) return {
     skip: true,
     label: 'Promotional email',
-    reason: '<span style="font-size:12px;color:var(--ink-3)">Promotional or marketing email — skipping AI analysis to save credits. Archive if not relevant.</span>',
+    reason: `<span style="font-size:12px;color:var(--ink-3)">Promotional or marketing email — skipping AI analysis to save credits. Archive if not relevant.</span>`,
     bg: '#fafaf9', border: 'rgba(0,0,0,0.06)'
   };
 
@@ -1014,7 +1057,7 @@ function classifyEmail(email, bodyText) {
   if (isNews) return {
     skip: true,
     label: 'News digest',
-    reason: '<span style="font-size:12px;color:var(--ink-3)">News or digest email — skipping AI analysis. Skim headlines directly.</span>',
+    reason: `<span style="font-size:12px;color:var(--ink-3)">News or digest email — skipping AI analysis. Skim headlines directly.</span>`,
     bg: '#fafaf9', border: 'rgba(0,0,0,0.06)'
   };
 
@@ -1022,7 +1065,7 @@ function classifyEmail(email, bodyText) {
   if (isNotification) return {
     skip: true,
     label: 'Automated notification',
-    reason: '<span style="font-size:12px;color:var(--ink-3)">Automated receipt or confirmation — no AI needed. Check the details directly if needed.</span>',
+    reason: `<span style="font-size:12px;color:var(--ink-3)">Automated receipt or confirmation — no AI needed. Check the details directly if needed.</span>`,
     bg: '#fafaf9', border: 'rgba(0,0,0,0.06)'
   };
 
@@ -1257,10 +1300,28 @@ function renderRelatedPanel(related, currentEmail) {
   panel.id = 'related-panel';
   panel.style.cssText = 'margin:0 22px 12px;background:var(--warm-light);border:0.5px solid rgba(180,83,9,0.2);border-radius:10px;padding:10px 13px;';
 
+  const titleRow = document.createElement('div');
+  titleRow.style.cssText = 'display:flex;align-items:center;margin-bottom:8px;';
+
   const title = document.createElement('div');
-  title.style.cssText = 'font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--warm-text);margin-bottom:8px;';
+  title.style.cssText = 'font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--warm-text);flex:1;';
   title.textContent = `${related.length} related email${related.length>1?'s':''} · topic timeline`;
-  panel.appendChild(title);
+
+  const minBtn = document.createElement('button');
+  minBtn.textContent = '−';
+  minBtn.title = 'Minimize';
+  minBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;color:var(--warm-text);padding:0 4px;line-height:1;';
+  let minimized = false;
+  minBtn.onclick = () => {
+    minimized = !minimized;
+    list.style.display = minimized ? 'none' : 'flex';
+    minBtn.textContent = minimized ? '+' : '−';
+    minBtn.title = minimized ? 'Expand' : 'Minimize';
+  };
+
+  titleRow.appendChild(title);
+  titleRow.appendChild(minBtn);
+  panel.appendChild(titleRow);
 
   const list = document.createElement('div');
   list.style.cssText = 'display:flex;flex-direction:column;gap:5px;max-height:140px;overflow-y:auto;';
@@ -1506,6 +1567,20 @@ async function deployUpdate() {
 
 // ── USER PROFILE ──
 let userProfile = { name: '', aliases: [], context: '' };
+
+// ── SENDER RULES ──
+function getSenderRules() {
+  try { return JSON.parse(localStorage.getItem('memail_sender_rules') || '{}'); } catch(e) { return {}; }
+}
+function addSenderRule(email, rule) {
+  const rules = getSenderRules();
+  rules[email.toLowerCase()] = rule;
+  localStorage.setItem('memail_sender_rules', JSON.stringify(rules));
+}
+function getSenderRule(email) {
+  const rules = getSenderRules();
+  return rules[email.toLowerCase()] || null;
+}
 
 function loadProfile() {
   try { userProfile = JSON.parse(localStorage.getItem('memail_profile') || '{}'); } catch(e) {}
