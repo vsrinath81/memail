@@ -546,7 +546,7 @@ async function startAuth() {
   const clientId = document.getElementById('client-id-input').value.trim();
   const apiKey = document.getElementById('api-key-input').value.trim();
   if (!clientId) { showAuthError('Please enter your Google Client ID.'); return; }
-  if (!clientId.includes('.apps.googleusercontent.com')) { showAuthError('That doesn\'t look like a valid Client ID. It should end in .apps.googleusercontent.com'); return; }
+  if (!clientId.includes('.apps.googleusercontent.com')) { showAuthError("That does not look like a valid Client ID. It should end in .apps.googleusercontent.com"); return; }
   if (!apiKey || !apiKey.startsWith('sk-ant')) { showAuthError('Please enter a valid Anthropic API key (starts with sk-ant).'); return; }
   localStorage.setItem('memail_api_key', apiKey);
 
@@ -915,8 +915,22 @@ async function openEmail(idx) {
       document.querySelectorAll('.email-row')[idx]?.classList.remove('unread');
     }
 
-    // Generate AI memory context
-    await generateMemoryContext(email, body);
+    // Classify email before spending API credits
+    const emailClass = classifyEmail(email, body);
+    if (emailClass.skip) {
+      document.getElementById('mem-title').textContent = emailClass.label;
+      document.getElementById('mem-body').innerHTML = emailClass.reason;
+      document.getElementById('mem-strip').style.background = emailClass.bg;
+      document.getElementById('mem-strip').style.borderColor = emailClass.border;
+      // Add force AI button
+      const forceBtn = document.createElement('button');
+      forceBtn.textContent = 'Analyse anyway';
+      forceBtn.style.cssText = 'margin-top:6px;font-size:10px;background:none;border:0.5px solid var(--border-2);border-radius:4px;padding:3px 8px;cursor:pointer;font-family:var(--font-ui);color:var(--ink-3);';
+      forceBtn.onclick = () => { forceBtn.remove(); generateMemoryContext(email, body); };
+      document.getElementById('mem-body').appendChild(forceBtn);
+    } else {
+      await generateMemoryContext(email, body);
+    }
 
   } catch(e) {
     console.error(e);
@@ -950,6 +964,70 @@ function sanitizeHtml(html) {
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
     .replace(/on\w+="[^"]*"/gi, '')
     .replace(/on\w+='[^']*'/gi, '');
+}
+
+// ── EMAIL CLASSIFIER — skip AI for useless emails ──
+function classifyEmail(email, bodyText) {
+  const from = (email.fromEmail || '').toLowerCase();
+  const subject = (email.subject || '').toLowerCase();
+  const body = bodyText.replace(/<[^>]+>/g,' ').toLowerCase().slice(0,500);
+
+  // Known spam/promotional senders
+  const spamDomains = ['dominos','pizzahut','michaels','nellis','groupon','offers.','deals.','marketing.','promo.','newsletter.','noreply.','no-reply.','notifications.','bounce.','mailer.','bulk.','campaign.'];
+  const spamSubjects = ['% off','sale ends','last chance','limited time','exclusive deal','unsubscribe','click here','act now','free shipping','coupon','promo code','special offer','flash sale','today only'];
+  const newsSubjects = ['msn unfold','morning briefing','daily digest','weekly digest','newsletter','round-up','roundup','top stories','breaking news'];
+  const notificationSubjects = ['run failed','run succeeded','build failed','deployment','your receipt','order confirmation','payment received','invoice','subscription','account statement'];
+  const securitySubjects = ['security alert','sign-in attempt','unusual activity','verify your','confirm your email','password reset','two-factor','2fa'];
+
+  const isSpamDomain = spamDomains.some(d => from.includes(d));
+  const isSpamSubject = spamSubjects.some(s => subject.includes(s));
+  const isNews = newsSubjects.some(s => subject.includes(s));
+  const isNotification = notificationSubjects.some(s => subject.includes(s));
+  const isSecurity = securitySubjects.some(s => subject.includes(s));
+  const isGithub = from.includes('github.com') || from.includes('github');
+  const isLinkedinPromo = from.includes('linkedin') && (subject.includes('people you may') || subject.includes('jobs you') || subject.includes('trending'));
+
+  // Security alerts — always run AI (important!)
+  if (isSecurity) return { skip: false };
+
+  // School emails — always run AI (important for Srinath!)
+  const isSchool = from.includes('harmonytx') || from.includes('olga') || from.includes('schoology') || subject.includes('pba') || subject.includes('puma news');
+  if (isSchool) return { skip: false };
+
+  // GitHub notifications — skip, show simple tag
+  if (isGithub && !subject.includes('security')) return {
+    skip: true,
+    label: 'GitHub notification',
+    reason: '<span style="font-size:12px;color:var(--ink-3)">Automated GitHub notification — workflow run or repo activity. No action needed unless it's a failure.</span>',
+    bg: '#f1f5f9', border: 'rgba(0,0,0,0.08)'
+  };
+
+  // Promotional/spam — skip AI
+  if (isSpamDomain || isSpamSubject || isLinkedinPromo) return {
+    skip: true,
+    label: 'Promotional email',
+    reason: '<span style="font-size:12px;color:var(--ink-3)">Promotional or marketing email — skipping AI analysis to save credits. Archive if not relevant.</span>',
+    bg: '#fafaf9', border: 'rgba(0,0,0,0.06)'
+  };
+
+  // News digests — skip AI
+  if (isNews) return {
+    skip: true,
+    label: 'News digest',
+    reason: '<span style="font-size:12px;color:var(--ink-3)">News or digest email — skipping AI analysis. Skim headlines directly.</span>',
+    bg: '#fafaf9', border: 'rgba(0,0,0,0.06)'
+  };
+
+  // Receipts/confirmations — light skip
+  if (isNotification) return {
+    skip: true,
+    label: 'Automated notification',
+    reason: '<span style="font-size:12px;color:var(--ink-3)">Automated receipt or confirmation — no AI needed. Check the details directly if needed.</span>',
+    bg: '#fafaf9', border: 'rgba(0,0,0,0.06)'
+  };
+
+  // Everything else — run AI
+  return { skip: false };
 }
 
 // ── AI MEMORY CONTEXT (topic-cluster engine) ──
@@ -1010,7 +1088,7 @@ REASONING RULES — apply these automatically from the profile:
 - Email from Olga Leonard Elementary → this is about SHRISTHI (his other daughter).
 - Zillow / Redfin / housing emails → Srinath already owns a home in Katy TX. This is casual market browsing, NOT urgent. Say so warmly.
 - LinkedIn job alerts → Srinath is a Program Manager at HCLTech exploring new roles. Be encouraging, flag strong matches.
-- Any mention of Varsha → that\'s his spouse. Handle with warmth.
+- Any mention of Varsha → that's his spouse. Handle with warmth.
 - Finance/bank emails → be direct, flag anything needing attention.
 - Security alerts → flag clearly, suggest action if needed.
 - School assignments / grades → connect to the right daughter based on school name.
@@ -1375,22 +1453,28 @@ async function deployUpdate() {
   btn.disabled = true;
 
   try {
-    // Fetch latest code from Claude's output URL
-    showToast('Fetching latest update…');
+    showToast('Fetching latest build…');
 
-    // Get current index.html SHA from GitHub
-    const shaResp = await fetch(
-      'https://api.github.com/repos/vsrinath81/memail/contents/index.html',
-      { headers: { 'Authorization': `token ${token}`, 'User-Agent': 'memail-app' } }
-    );
-    const shaData = await shaResp.json();
-    const sha = shaData.sha;
+    // Always fetch _claude_deploy.html from GitHub — never use browser DOM
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    let latestCode;
+    try {
+      const sourceResp = await fetch(
+        'https://raw.githubusercontent.com/vsrinath81/memail/main/_claude_deploy.html?t=' + Date.now(),
+        { signal: controller.signal }
+      );
+      clearTimeout(timeout);
+      if (!sourceResp.ok) throw new Error('Could not fetch latest build: ' + sourceResp.status);
+      latestCode = await sourceResp.text();
+    } catch(fetchErr) {
+      clearTimeout(timeout);
+      throw new Error('Fetch failed: ' + fetchErr.message);
+    }
 
-    // Get current page source as the "latest" code
-    const currentCode = document.documentElement.outerHTML;
-    const encoded = btoa(unescape(encodeURIComponent(currentCode)));
+    showToast('Deploying to live site…');
 
-    // Push via GitHub API through Cloudflare Worker
+    // Push via Cloudflare Worker to index.html
     const resp = await fetch('https://bold-lake-b876.vsrinath81.workers.dev/deploy', {
       method: 'POST',
       headers: {
@@ -1401,7 +1485,7 @@ async function deployUpdate() {
         github_token: token,
         owner: 'vsrinath81',
         repo: 'memail',
-        content: currentCode,
+        content: latestCode,
         message: `Auto-deploy from memáil: ${new Date().toUTCString()}`
       })
     });
