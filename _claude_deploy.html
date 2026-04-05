@@ -1717,8 +1717,54 @@ function updateScanMsg(msg, pct) {
 
 function closeMemorySetup() {
   document.getElementById('memory-setup-overlay').classList.remove('open');
-  // Show life events in sidebar if found
   renderLifeEventsSidebar();
+  // Open profile to show what was found
+  openProfile();
+  // Show life events tab in profile
+  showLifeEventsInProfile();
+}
+
+function showLifeEventsInProfile() {
+  const mem = getMemory();
+  const events = mem.lifeEvents || [];
+  if (!events.length) return;
+
+  // Find or create life events section in profile modal
+  let eventsSection = document.getElementById('profile-life-events');
+  if (!eventsSection) {
+    eventsSection = document.createElement('div');
+    eventsSection.id = 'profile-life-events';
+    eventsSection.style.cssText = 'margin-top:16px;padding-top:16px;border-top:0.5px solid var(--border);';
+    const modal = document.querySelector('.profile-modal');
+    if (modal) modal.appendChild(eventsSection);
+  }
+
+  const categoryColors = {
+    medical: { bg:'#fee2e2', color:'#dc2626', icon:'🏥' },
+    automotive: { bg:'#fef3c7', color:'#b45309', icon:'🚗' },
+    financial: { bg:'#dbeafe', color:'#1d4ed8', icon:'💰' },
+    family: { bg:'#dcfce7', color:'#15803d', icon:'🎂' },
+    home: { bg:'#f3e8ff', color:'#7c3aed', icon:'🏠' }
+  };
+
+  eventsSection.innerHTML = `
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--ink-3);margin-bottom:10px;">
+      ${events.length} life events found in your emails
+    </div>
+    ${events.slice(0,8).map(e => {
+      const cat = categoryColors[e.category] || { bg:'#f1f5f9', color:'#475569', icon:'📧' };
+      const date = e.date ? new Date(e.date).toLocaleDateString([], {month:'short', day:'numeric', year:'numeric'}) : '';
+      return `
+        <div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:0.5px solid var(--border);">
+          <div style="width:26px;height:26px;border-radius:6px;background:${cat.bg};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">${cat.icon}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:12px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.title}</div>
+            <div style="font-size:10.5px;color:var(--ink-3);">${e.category} · ${date}</div>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
 }
 
 function renderLifeEventsSidebar() {
