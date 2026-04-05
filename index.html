@@ -228,6 +228,25 @@
   .account-add { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; color: var(--accent-text); font-size: 12.5px; font-weight: 500; border-top: 0.5px solid var(--border); transition: background 0.1s; }
   .account-add:hover { background: var(--accent-light); }
 
+  /* profile modal */
+  .profile-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: none; align-items: center; justify-content: center; }
+  .profile-modal-overlay.open { display: flex; }
+  .profile-modal { background: var(--surface-3); border-radius: 14px; padding: 28px 32px; width: 100%; max-width: 460px; }
+  .profile-modal h2 { font-family: var(--font-display); font-size: 22px; margin-bottom: 6px; }
+  .profile-modal p { font-size: 13px; color: var(--ink-2); margin-bottom: 20px; line-height: 1.6; }
+  .profile-section { margin-bottom: 18px; }
+  .profile-section label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-3); margin-bottom: 5px; }
+  .profile-section input, .profile-section textarea { width: 100%; padding: 9px 12px; background: var(--surface-2); border: 0.5px solid var(--border-2); border-radius: var(--r-sm); font-family: var(--font-ui); font-size: 13px; color: var(--ink); outline: none; }
+  .profile-section textarea { min-height: 80px; resize: none; line-height: 1.6; }
+  .profile-section input:focus, .profile-section textarea:focus { border-color: var(--accent); }
+  .alias-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .alias-chip { display: flex; align-items: center; gap: 5px; background: var(--accent-light); color: var(--accent-text); border-radius: 20px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; }
+  .alias-chip button { background: none; border: none; color: var(--accent-text); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  .profile-save-btn { width: 100%; padding: 11px; background: var(--accent); color: white; border: none; border-radius: var(--r-sm); font-family: var(--font-ui); font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 6px; }
+  .profile-save-btn:hover { background: var(--accent-2); }
+  .profile-icon-btn { background: none; border: 0.5px solid var(--border-2); border-radius: var(--r-sm); padding: 5px 8px; cursor: pointer; font-size: 11px; color: var(--ink-2); font-family: var(--font-ui); transition: background 0.1s; }
+  .profile-icon-btn:hover { background: var(--surface-2); }
+
   /* toast */
   .toast { position: fixed; bottom: 24px; right: 24px; background: var(--ink); color: white; border-radius: var(--r-sm); padding: 10px 16px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -300,6 +319,10 @@
         <div class="pulse"></div>
         <span id="memory-count">Memory active</span>
       </div>
+      <button class="profile-icon-btn" onclick="openProfile()" title="My profile">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="5" r="3"/><path d="M1 13c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+        Profile
+      </button>
       <div class="account-switcher" id="account-switcher">
         <div class="account-btn" onclick="toggleAccountDropdown()">
           <div class="account-avatar" id="user-initials">?</div>
@@ -439,6 +462,37 @@
 </div>
 
 <!-- Toast -->
+<!-- PROFILE MODAL -->
+<div class="profile-modal-overlay" id="profile-modal-overlay" onclick="closeProfileIfOutside(event)">
+  <div class="profile-modal">
+    <h2>Your profile</h2>
+    <p>Tell memáil about yourself so the AI memory feels personal across all your accounts.</p>
+
+    <div class="profile-section">
+      <label>Your name</label>
+      <input type="text" id="profile-name" placeholder="e.g. Srinath">
+    </div>
+
+    <div class="profile-section">
+      <label>Your email aliases / accounts</label>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input type="text" id="alias-input" placeholder="e.g. flashblade@gmail.com" style="flex:1" onkeydown="if(event.key==='Enter')addAlias()">
+        <button onclick="addAlias()" style="background:var(--accent);color:white;border:none;border-radius:var(--r-sm);padding:0 14px;font-family:var(--font-ui);font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>
+      </div>
+      <div class="alias-list" id="alias-list"></div>
+      <div style="font-size:11px;color:var(--ink-3);margin-top:6px">All these addresses = you. memáil won't treat them as strangers.</div>
+    </div>
+
+    <div class="profile-section">
+      <label>Life context <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink-3)">(helps AI personalize memory)</span></label>
+      <textarea id="profile-context" placeholder="e.g. I bought a home in Katy TX in 2022 so Zillow emails are just for fun. I have a daughter named Shrutha at Harmony Public Schools. I work in tech and am open to senior delivery manager roles."></textarea>
+    </div>
+
+    <button class="profile-save-btn" onclick="saveProfile()">Save profile</button>
+    <button onclick="closeProfile()" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-3);font-family:var(--font-ui);font-size:13px;cursor:pointer;padding:6px">Cancel</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -921,12 +975,17 @@ async function generateMemoryContext(email, bodyText) {
     ? allRelated.map(e => `- [${e.time || formatTime(e.date)}] From: ${e.from} | Subject: "${e.subject}" | Preview: ${e.snippet?.slice(0,120)||''}`).join('\n')
     : 'No related emails found.';
 
-  // Get first name from email address
+  // Get name from profile or derive from email
+  loadProfile();
   const userEmail = document.getElementById('user-name')?.textContent || '';
-  const firstName = userEmail.split('@')[0].split('.')[0];
+  const firstName = userProfile.name || userEmail.split('@')[0].split('.')[0];
   const userName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
+  const profileCtx = getProfileContext();
 
-  const prompt = `You are a smart, warm personal assistant who knows this person well. Your job is to look across a timeline of related emails and speak to them directly — like a trusted friend giving a quick, useful heads-up. Be concise, personal, and actionable. Use their first name: ${userName}.
+  const prompt = `You are a smart, warm personal assistant who knows this person well. Here is everything you know about them:
+${profileCtx}
+
+Use this context to make your memory insights personal and relevant — e.g. if they bought a home already, treat house listing emails as casual browsing not urgent action. Your job is to look across a timeline of related emails and speak to them directly — like a trusted friend giving a quick, useful heads-up. Be concise, personal, and actionable. Use their first name: ${userName}.
 
 CURRENT EMAIL:
 Sender: ${email.from} <${email.fromEmail}>
@@ -1255,6 +1314,72 @@ function refreshCurrentView() {
 }
 
 // ── SIGN OUT ──
+// ── USER PROFILE ──
+let userProfile = { name: '', aliases: [], context: '' };
+
+function loadProfile() {
+  try { userProfile = JSON.parse(localStorage.getItem('memail_profile') || '{}'); } catch(e) {}
+  userProfile.name = userProfile.name || '';
+  userProfile.aliases = userProfile.aliases || [];
+  userProfile.context = userProfile.context || '';
+}
+
+function saveProfile() {
+  userProfile.name = document.getElementById('profile-name').value.trim();
+  userProfile.context = document.getElementById('profile-context').value.trim();
+  localStorage.setItem('memail_profile', JSON.stringify(userProfile));
+  closeProfile();
+  showToast('Profile saved! Memory will use your context from now on.');
+}
+
+function openProfile() {
+  loadProfile();
+  document.getElementById('profile-name').value = userProfile.name;
+  document.getElementById('profile-context').value = userProfile.context;
+  renderAliases();
+  // Auto-add all connected accounts as aliases
+  accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
+  renderAliases();
+  document.getElementById('profile-modal-overlay').classList.add('open');
+}
+
+function closeProfile() { document.getElementById('profile-modal-overlay').classList.remove('open'); }
+function closeProfileIfOutside(e) { if (e.target.id === 'profile-modal-overlay') closeProfile(); }
+
+function addAlias() {
+  const input = document.getElementById('alias-input');
+  const val = input.value.trim().toLowerCase();
+  if (!val) return;
+  if (!userProfile.aliases.includes(val)) userProfile.aliases.push(val);
+  input.value = '';
+  renderAliases();
+}
+
+function removeAlias(alias) {
+  userProfile.aliases = userProfile.aliases.filter(a => a !== alias);
+  renderAliases();
+}
+
+function renderAliases() {
+  const list = document.getElementById('alias-list');
+  if (!list) return;
+  list.innerHTML = userProfile.aliases.map(a => `
+    <div class="alias-chip">
+      ${a}
+      <button onclick="removeAlias('${a}')" title="Remove">×</button>
+    </div>
+  `).join('');
+}
+
+function getProfileContext() {
+  loadProfile();
+  const parts = [];
+  if (userProfile.name) parts.push(`User's name: ${userProfile.name}`);
+  if (userProfile.aliases.length) parts.push(`All email addresses belonging to this user: ${userProfile.aliases.join(', ')}`);
+  if (userProfile.context) parts.push(`Life context: ${userProfile.context}`);
+  return parts.join('\n');
+}
+
 function signOut() {
   if (accessToken) google.accounts.oauth2.revoke(accessToken);
   accessToken = null;
@@ -1282,6 +1407,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const savedKey = localStorage.getItem('memail_api_key');
   if (savedKey) document.getElementById('api-key-input').value = savedKey;
   loadAccounts();
+  loadProfile();
 });
 </script>
 </body>
