@@ -9,6 +9,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CLAUDE_TOKEN }}
       - name: Promote to index.html
         run: |
           cp _claude_deploy.html index.html
