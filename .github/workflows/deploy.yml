@@ -1,21 +1,26 @@
-name: Auto-deploy from Claude
+name: Deploy Cloudflare Worker
 on:
   push:
-    paths: ['_claude_deploy.html']
+    branches: [main]
+    paths: ['worker.js', 'wrangler.toml']
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    name: Deploy to Cloudflare Workers
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          token: ${{ secrets.CLAUDE_TOKEN }}
-      - name: Promote to index.html
-        run: |
-          cp _claude_deploy.html index.html
-          git config user.email "claude-deploy@memail.app"
-          git config user.name "Claude Auto-Deploy"
-          git add index.html
-          git commit -m "Auto-deploy: $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push
+          node-version: '22'
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Deploy Worker
+        run: wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
