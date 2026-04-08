@@ -1637,6 +1637,29 @@ async function startSentScan() {
       addPersonMemory(email, { sentCount: data.count, lastContacted: data.lastContacted, recentSubjects: data.subjects.slice(0,5) });
     });
 
+    // Quick subject-only scan on ALL 100 sent emails for life events
+    updateScanMsg('Scanning email subjects for life events…', 65);
+    details.forEach(msg => {
+      const headers = msg.payload?.headers || [];
+      const subject = headers.find(h => h.name === 'Subject')?.value || '';
+      const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
+      const subjectLower = subject.toLowerCase();
+      if (skipKeywords.some(k => subjectLower.includes(k))) return;
+      for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
+        if (keywords.some(k => subjectLower.includes(k))) {
+          addLifeEvent({
+            title: subject.slice(0,60),
+            category,
+            date: date.toISOString(),
+            snippet: '',
+            source: 'sent-subject'
+          });
+          eventsFound++;
+          break;
+        }
+      }
+    });
+
     updateScanMsg('Extracting life events from sent emails…', 70);
 
     // Fetch full body of top 30 sent emails to find life events
@@ -1655,7 +1678,7 @@ async function startSentScan() {
     const skipKeywords = ['package on the move', 'out for delivery', 'your order has shipped', 'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email', 'promotional', 'flash sale', 'limited time offer', 'coupon code'];
 
     let eventsFound = 0;
-    for (const msg of topSent.slice(0, 15)) {
+    for (const msg of topSent.slice(0, 40)) {
       try {
         const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
         const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,500);
@@ -1668,13 +1691,17 @@ async function startSentScan() {
         // Skip if matches negative keywords
         if (skipKeywords.some(k => combined.includes(k))) continue;
 
+        // Check subject first (faster), then combined
+        const subjectOnly = subject.toLowerCase();
         for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
-          if (keywords.some(k => combined.includes(k))) {
+          const matchesSubject = keywords.some(k => subjectOnly.includes(k));
+          const matchesBody = keywords.some(k => combined.includes(k));
+          if (matchesSubject || matchesBody) {
             addLifeEvent({
               title: subject.slice(0,60),
               category,
               date: date.toISOString(),
-              snippet: body.slice(0,100),
+              snippet: (body || '').slice(0,120),
               source: 'sent'
             });
             eventsFound++;
