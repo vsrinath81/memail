@@ -1604,6 +1604,11 @@ async function startSentScan() {
       updateScanMsg(`Reading sent emails… ${i+10}/${messages.length}`, pct);
     }
 
+    // Clear old life events before fresh scan
+    const mem = getMemory();
+    mem.lifeEvents = [];
+    localStorage.setItem(MEMORY_KEY, JSON.stringify(mem));
+
     // Build relationship map from sent emails
     updateScanMsg('Building your relationship map…', 55);
     const recipients = {};
@@ -1637,12 +1642,16 @@ async function startSentScan() {
     // Fetch full body of top 30 sent emails to find life events
     const topSent = details.slice(0, 30);
     const lifeEventKeywords = {
-      medical: ['appointment', 'doctor', 'dr.', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab results', 'checkup', 'dental', 'optometrist'],
-      automotive: ['car service', 'oil change', 'tire', 'vehicle', 'mechanic', 'auto', 'dealership', 'registration'],
-      financial: ['insurance', 'renewal', 'subscription', 'payment due', 'invoice', 'tax', 'policy'],
-      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'party', 'celebration'],
-      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'maintenance', 'warranty']
+      medical: ['appointment with dr', 'doctor appointment', 'clinic visit', 'hospital visit', 'pharmacy pickup', 'prescription ready', 'lab results', 'annual checkup', 'dental appointment', 'eye exam', 'optometrist', 'pediatrician', 'vaccination'],
+      automotive: ['car service appointment', 'oil change appointment', 'tire rotation', 'vehicle inspection', 'mechanic appointment', 'service center', 'car repair', 'auto service', 'scheduled maintenance'],
+      financial: ['insurance renewal', 'policy renewal', 'subscription renewal', 'payment due', 'tax filing', 'tax deadline', 'open enrollment', 'benefits enrollment', 'premium due'],
+      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'baby shower', 'family reunion', 'school registration', 'enrollment deadline', 'permission slip due'],
+      home: ['HOA payment', 'pest control appointment', 'plumber appointment', 'electrician', 'home repair', 'warranty expir', 'lease renewal', 'mortgage'],
+      school: ['staar', 'report card', 'parent teacher', 'conference', 'field trip', 'school event', 'semester', 'enrollment', 'iep meeting', 'progress report']
     };
+
+    // Negative keywords — skip these even if they match
+    const skipKeywords = ['package on the move', 'your order', 'shipped', 'delivered', 'tracking', 'out for delivery', 'unsubscribe', 'click here', 'marketing', 'newsletter', 'promotion'];
 
     let eventsFound = 0;
     for (const msg of topSent.slice(0, 15)) {
@@ -1654,6 +1663,10 @@ async function startSentScan() {
 
         // Check for life event keywords
         const combined = (subject + ' ' + body).toLowerCase();
+
+        // Skip if matches negative keywords
+        if (skipKeywords.some(k => combined.includes(k))) continue;
+
         for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
           if (keywords.some(k => combined.includes(k))) {
             addLifeEvent({
@@ -1669,6 +1682,35 @@ async function startSentScan() {
         }
       } catch(e) { /* skip */ }
     }
+
+    // Also scan recent INCOMING emails for life events
+    updateScanMsg('Scanning incoming emails for life events…', 72);
+    try {
+      const incomingResp = await gapi.client.gmail.users.messages.list({
+        userId: 'me', q: 'in:inbox', maxResults: 50
+      });
+      const incomingMsgs = incomingResp.result.messages || [];
+      const incomingDetails = await Promise.all(
+        incomingMsgs.slice(0,20).map(m =>
+          gapi.client.gmail.users.messages.get({ userId:'me', id:m.id, format:'full' })
+        )
+      );
+      for (const msg of incomingDetails) {
+        const headers = msg.result.payload?.headers || [];
+        const subject = headers.find(h=>h.name==='Subject')?.value || '';
+        const date = new Date(msg.result.internalDate*1);
+        const body = extractBody(msg.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,400);
+        const combined = (subject + ' ' + body).toLowerCase();
+        if (skipKeywords.some(k => combined.includes(k))) continue;
+        for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
+          if (keywords.some(k => combined.includes(k))) {
+            addLifeEvent({ title: subject.slice(0,60), category, date: date.toISOString(), snippet: body.slice(0,100), source: 'inbox' });
+            eventsFound++;
+            break;
+          }
+        }
+      }
+    } catch(e) { console.error('Incoming scan error:', e); }
 
     updateScanMsg('Analysing patterns with AI…', 85);
 
@@ -1744,7 +1786,8 @@ function showLifeEventsInProfile() {
     automotive: { bg:'#fef3c7', color:'#b45309', icon:'🚗' },
     financial: { bg:'#dbeafe', color:'#1d4ed8', icon:'💰' },
     family: { bg:'#dcfce7', color:'#15803d', icon:'🎂' },
-    home: { bg:'#f3e8ff', color:'#7c3aed', icon:'🏠' }
+    home: { bg:'#f3e8ff', color:'#7c3aed', icon:'🏠' },
+    school: { bg:'#e0f2fe', color:'#0369a1', icon:'🎓' }
   };
 
   eventsSection.innerHTML = `
