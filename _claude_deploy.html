@@ -1639,13 +1639,25 @@ async function startSentScan() {
 
     // Quick subject-only scan on ALL 100 sent emails for life events
     updateScanMsg('Scanning email subjects for life events…', 65);
+
+    const skipKeywordsQuick = ['package on the move', 'out for delivery', 'your order has shipped', 'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email', 'promotional', 'flash sale', 'limited time offer', 'coupon code'];
+    const lifeKeywordsQuick = {
+      medical: ['appointment', 'doctor', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab result', 'checkup', 'dental', 'optometrist', 'vaccination', 'health'],
+      automotive: ['car service', 'oil change', 'tire', 'vehicle service', 'mechanic', 'auto repair', 'service reminder', 'volvo', 'registration due', 'inspection'],
+      financial: ['insurance', 'renewal', 'payment due', 'tax', 'open enrollment', 'benefits', 'premium', 'policy', 'invoice due', 'subscription', 'annual fee'],
+      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'permission slip', 'rsvp', 'celebrate'],
+      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'warranty', 'lease', 'mortgage'],
+      school: ['staar', 'report card', 'parent teacher', 'conference', 'field trip', 'enrollment', 'progress report', 'grade', 'school registration'],
+      action: ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required', 'response needed', 'please confirm', 'last chance', 'urgent']
+    };
+
     details.forEach(msg => {
       const headers = msg.payload?.headers || [];
       const subject = headers.find(h => h.name === 'Subject')?.value || '';
       const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
       const subjectLower = subject.toLowerCase();
-      if (skipKeywords.some(k => subjectLower.includes(k))) return;
-      for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
+      if (skipKeywordsQuick.some(k => subjectLower.includes(k))) return;
+      for (const [category, keywords] of Object.entries(lifeKeywordsQuick)) {
         if (keywords.some(k => subjectLower.includes(k))) {
           addLifeEvent({
             title: subject.slice(0,60),
