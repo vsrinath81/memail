@@ -905,6 +905,8 @@ function renderEmailList(emails) {
   `).join('');
 }
 
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 function showListLoading() {
   document.getElementById('email-list-body').innerHTML = '<div class="loading-list"><span class="spinner"></span>Loading…</div>';
 }
