@@ -1640,15 +1640,16 @@ async function startSentScan() {
     // Quick subject-only scan on ALL 100 sent emails for life events
     updateScanMsg('Scanning email subjects for life events…', 65);
 
-    const skipKeywordsQuick = ['package on the move', 'out for delivery', 'your order has shipped', 'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email', 'promotional', 'flash sale', 'limited time offer', 'coupon code'];
-    const lifeKeywordsQuick = {
-      medical: ['appointment', 'doctor', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab result', 'checkup', 'dental', 'optometrist', 'vaccination', 'health'],
-      automotive: ['car service', 'oil change', 'tire', 'vehicle service', 'mechanic', 'auto repair', 'service reminder', 'volvo', 'registration due', 'inspection'],
-      financial: ['insurance', 'renewal', 'payment due', 'tax', 'open enrollment', 'benefits', 'premium', 'policy', 'invoice due', 'subscription', 'annual fee'],
-      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'permission slip', 'rsvp', 'celebrate'],
-      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'warranty', 'lease', 'mortgage'],
-      school: ['staar', 'report card', 'parent teacher', 'conference', 'field trip', 'enrollment', 'progress report', 'grade', 'school registration'],
-      action: ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required', 'response needed', 'please confirm', 'last chance', 'urgent']
+    // Keyword lists defined HERE before any usage
+    const skipKeywordsList = ['package on the move', 'out for delivery', 'your order has shipped', 'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email', 'promotional', 'flash sale', 'limited time offer', 'coupon code'];
+    const lifeEventKeywords = {
+      medical: ['appointment', 'doctor', 'dr.', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab result', 'checkup', 'dental', 'optometrist', 'pediatrician', 'vaccination', 'urgent care', 'specialist', 'physical exam', 'blood test', 'health'],
+      automotive: ['car service', 'oil change', 'tire', 'vehicle service', 'mechanic', 'auto repair', 'dealership', 'service reminder', 'volvo', 'registration due', 'inspection due', 'scheduled service'],
+      financial: ['insurance', 'renewal', 'payment due', 'tax', 'open enrollment', 'benefits', 'premium', 'policy', 'invoice due', 'subscription', 'annual fee', 'deductible', 'refund'],
+      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'baby shower', 'family reunion', 'permission slip', 'rsvp', 'celebrate', 'party invite'],
+      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'warranty', 'lease', 'mortgage', 'home service', 'maintenance due'],
+      school: ['staar', 'report card', 'parent teacher', 'conference', 'field trip', 'enrollment', 'iep', 'progress report', 'grade', 'homework', 'semester', 'school registration', 'back to school'],
+      action: ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required', 'response needed', 'please confirm', 'sign and return', 'do not forget', 'last chance', 'urgent']
     };
 
     details.forEach(msg => {
@@ -1656,8 +1657,8 @@ async function startSentScan() {
       const subject = headers.find(h => h.name === 'Subject')?.value || '';
       const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
       const subjectLower = subject.toLowerCase();
-      if (skipKeywordsQuick.some(k => subjectLower.includes(k))) return;
-      for (const [category, keywords] of Object.entries(lifeKeywordsQuick)) {
+      if (skipKeywordsList.some(k => subjectLower.includes(k))) return;
+      for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
         if (keywords.some(k => subjectLower.includes(k))) {
           addLifeEvent({
             title: subject.slice(0,60),
@@ -1675,19 +1676,9 @@ async function startSentScan() {
     updateScanMsg('Extracting life events from sent emails…', 70);
 
     // Fetch full body of top 30 sent emails to find life events
-    const topSent = details.slice(0, 30);
-    const lifeEventKeywords = {
-      medical: ['appointment', 'doctor', 'dr.', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab result', 'checkup', 'dental', 'optometrist', 'pediatrician', 'vaccination', 'urgent care', 'specialist', 'physical exam', 'blood test', 'health'],
-      automotive: ['car service', 'oil change', 'tire', 'vehicle service', 'mechanic', 'auto repair', 'dealership', 'service reminder', 'volvo', 'registration due', 'inspection due', 'scheduled service'],
-      financial: ['insurance', 'renewal', 'payment due', 'tax', 'open enrollment', 'benefits', 'premium', 'policy', 'invoice due', 'subscription', 'annual fee', 'deductible', 'refund'],
-      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'baby shower', 'family reunion', 'permission slip', 'rsvp', 'celebrate', 'party invite'],
-      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'warranty', 'lease', 'mortgage', 'home service', 'maintenance due'],
-      school: ['staar', 'report card', 'parent teacher', 'conference', 'field trip', 'school event', 'enrollment', 'iep', 'progress report', 'grade', 'homework', 'semester', 'school registration', 'back to school'],
-      action: ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required', 'response needed', 'please confirm', 'sign and return', 'do not forget', 'last chance', 'urgent']
-    };
 
-    // Skip obvious spam/promo — but keep anything with action dates
-    const skipKeywords = ['package on the move', 'out for delivery', 'your order has shipped', 'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email', 'promotional', 'flash sale', 'limited time offer', 'coupon code'];
+
+    // Skip list defined earlier as skipKeywordsList
 
     let eventsFound = 0;
     for (const msg of topSent.slice(0, 40)) {
@@ -1701,7 +1692,7 @@ async function startSentScan() {
         const combined = (subject + ' ' + body).toLowerCase();
 
         // Skip if matches negative keywords
-        if (skipKeywords.some(k => combined.includes(k))) continue;
+        if (skipKeywordsList.some(k => combined.includes(k))) continue;
 
         // Check subject first (faster), then combined
         const subjectOnly = subject.toLowerCase();
@@ -1741,7 +1732,7 @@ async function startSentScan() {
         const date = new Date(msg.result.internalDate*1);
         const body = extractBody(msg.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,400);
         const combined = (subject + ' ' + body).toLowerCase();
-        if (skipKeywords.some(k => combined.includes(k))) continue;
+        if (skipKeywordsList.some(k => combined.includes(k))) continue;
         for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
           if (keywords.some(k => combined.includes(k))) {
             addLifeEvent({ title: subject.slice(0,60), category, date: date.toISOString(), snippet: body.slice(0,100), source: 'inbox' });
