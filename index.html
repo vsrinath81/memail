@@ -1717,16 +1717,18 @@ async function startSentScan() {
       }
     } catch(e) { console.error('Inbox scan error:', e); }
 
-    // AI insight
+    // AI insight - with timeout so scan doesn't hang
     updateScanMsg('Analysing patterns with AI...', 88);
     const topNames = topRecipients.slice(0,10).map(([email,d]) => `${email} (${d.count} emails)`).join(', ');
     try {
-      const resp = await callClaude(`Based on these sent email patterns for ${document.getElementById('user-name')?.textContent || 'this user'}, write 2-3 warm sentences about their communication style and key relationships.
+      const insightPromise = callClaude(`Based on these sent email patterns for ${document.getElementById('user-name')?.textContent || 'this user'}, write 2-3 warm sentences about their communication style and key relationships.
 
 Top recipients: ${topNames}
 Total sent: ${details.length}, Life events found: ${eventsFound}
 
 JSON: {"insight":"...","topRelationship":"..."}`);
+      const timeoutPromise = new Promise((_,reject) => setTimeout(() => reject(new Error('timeout')), 10000));
+      const resp = await Promise.race([insightPromise, timeoutPromise]);
       const text = resp.content?.[0]?.text || '{}';
       const parsed = JSON.parse(text.replace(/[`]{3}json|[`]{3}/g,'').trim());
       saveMemory({ sentInsight:parsed, sentScanDate:new Date().toISOString(), sentCount:details.length, relationshipCount:topRecipients.length });
