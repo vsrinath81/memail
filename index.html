@@ -634,7 +634,7 @@ async function launchApp() {
   document.getElementById('app').style.display = 'grid';
   await loadUserProfile();
   renderLifeEventsSidebar();
-  await loadCategory('primary');
+  await loadInbox();
 }
 
 async function loadUserProfile() {
@@ -795,7 +795,7 @@ async function loadPeople() {
 
 // Gmail category tabs
 const CATEGORIES = {
-  primary:    { query: 'in:inbox category:primary',    label: 'Primary',    nav: 'nav-primary' },
+  primary:    { query: 'in:inbox -category:promotions -category:social -category:updates', label: 'Primary',    nav: 'nav-primary' },
   social:     { query: 'in:inbox category:social',     label: 'Social',     nav: 'nav-social' },
   promotions: { query: 'in:inbox category:promotions', label: 'Promotions', nav: 'nav-promotions' },
   updates:    { query: 'in:inbox category:updates',    label: 'Updates',    nav: 'nav-updates' },
@@ -818,9 +818,14 @@ function setNavActive(id) {
 async function fetchEmails(query, maxResults) {
   showListLoading();
   try {
-    const listResp = await gapi.client.gmail.users.messages.list({
+    // Add timeout so it never hangs forever
+    const listPromise = gapi.client.gmail.users.messages.list({
       userId: 'me', q: query, maxResults: maxResults
     });
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Gmail API timeout — try refreshing')), 15000)
+    );
+    const listResp = await Promise.race([listPromise, timeoutPromise]);
     const messages = listResp.result.messages || [];
     if (!messages.length) { showListEmpty('No emails found'); return; }
 
