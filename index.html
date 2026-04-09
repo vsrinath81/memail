@@ -1200,7 +1200,7 @@ Respond ONLY in this exact JSON (no extra text, no markdown):
   try {
     const resp = await callClaude(prompt);
     const text = resp.content?.[0]?.text || '{}';
-    const clean = text.replace(/```json[\s\S]*?```|```/g,'').trim();
+    const clean = text.replace(/[`]{3}json[\s\S]*?[`]{3}|[`]{3}/g,'').trim();
     const parsed = JSON.parse(clean);
 
     // Render memory with trend indicator
@@ -1721,7 +1721,7 @@ Total sent: ${details.length}, Life events found: ${eventsFound}
 
 JSON: {"insight":"...","topRelationship":"..."}`);
       const text = resp.content?.[0]?.text || '{}';
-      const parsed = JSON.parse(text.replace(/\`\`\`json|\`\`\`/g,'').trim());
+      const parsed = JSON.parse(text.replace(/[`]{3}json|[`]{3}/g,'').trim());
       saveMemory({ sentInsight:parsed, sentScanDate:new Date().toISOString(), sentCount:details.length, relationshipCount:topRecipients.length });
 
       document.getElementById('memory-setup-stats').innerHTML = `
@@ -1751,3 +1751,6 @@ JSON: {"insight":"...","topRelationship":"..."}`);
 }
 
 
+</script>
+</body>
+</html>
