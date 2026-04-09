@@ -1583,44 +1583,71 @@ async function startSentScan() {
   document.getElementById('memory-setup-close').style.display = 'none';
   document.getElementById('memory-setup-stats').innerHTML = '';
 
+  // ALL constants declared at top of function — no initialization order issues
+  const SKIP_WORDS = ['package on the move', 'out for delivery', 'your order has shipped',
+    'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email',
+    'promotional', 'flash sale', 'limited time offer', 'coupon code'];
+
+  const LIFE_KEYWORDS = {
+    medical:    ['appointment', 'doctor', 'clinic', 'hospital', 'pharmacy', 'prescription',
+                 'lab result', 'checkup', 'dental', 'optometrist', 'vaccination', 'health',
+                 'urgent care', 'specialist', 'physical exam', 'blood test'],
+    automotive: ['car service', 'oil change', 'tire', 'vehicle service', 'mechanic',
+                 'auto repair', 'dealership', 'service reminder', 'volvo', 'registration due',
+                 'inspection', 'scheduled service'],
+    financial:  ['insurance', 'renewal', 'payment due', 'tax', 'open enrollment', 'benefits',
+                 'premium', 'policy', 'invoice due', 'subscription', 'annual fee', 'refund'],
+    family:     ['birthday', 'anniversary', 'graduation', 'wedding', 'permission slip',
+                 'rsvp', 'celebrate', 'baby shower'],
+    home:       ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'warranty',
+                 'lease', 'mortgage', 'home service'],
+    school:     ['staar', 'report card', 'parent teacher', 'conference', 'field trip',
+                 'enrollment', 'iep', 'progress report', 'grade', 'homework', 'semester'],
+    action:     ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required',
+                 'response needed', 'please confirm', 'last chance', 'urgent']
+  };
+
+  let eventsFound = 0;
+  let topRecipients = [];
+
+  function isLifeEvent(text) {
+    const lower = text.toLowerCase();
+    if (SKIP_WORDS.some(k => lower.includes(k))) return null;
+    for (const [cat, words] of Object.entries(LIFE_KEYWORDS)) {
+      if (words.some(w => lower.includes(w))) return cat;
+    }
+    return null;
+  }
+
   try {
-    // Fetch sent emails
-    updateScanMsg('Fetching your sent emails…', 10);
-    const sentResp = await gapi.client.gmail.users.messages.list({
-      userId: 'me', q: 'in:sent', maxResults: 100
-    });
+    updateScanMsg('Fetching your sent emails...', 10);
+    const sentResp = await gapi.client.gmail.users.messages.list({ userId:'me', q:'in:sent', maxResults:100 });
     const messages = sentResp.result.messages || [];
-    updateScanMsg(`Found ${messages.length} sent emails — analysing…`, 20);
+    updateScanMsg(`Found ${messages.length} sent emails — analysing...`, 20);
 
     // Fetch metadata in batches
     const details = [];
     for (let i = 0; i < messages.length; i += 10) {
       const batch = messages.slice(i, i+10);
       const fetched = await Promise.all(batch.map(m =>
-        gapi.client.gmail.users.messages.get({ userId:'me', id:m.id, format:'metadata', metadataHeaders:['Subject','From','To','Date'] })
+        gapi.client.gmail.users.messages.get({ userId:'me', id:m.id, format:'metadata',
+          metadataHeaders:['Subject','From','To','Date'] })
       ));
       details.push(...fetched.map(r => r.result));
-      const pct = 20 + Math.round((i/messages.length) * 30);
-      updateScanMsg(`Reading sent emails… ${i+10}/${messages.length}`, pct);
+      updateScanMsg(`Reading sent emails... ${Math.min(i+10, messages.length)}/${messages.length}`, 20 + Math.round((i/messages.length)*30));
     }
 
-    // Clear old life events before fresh scan
-    const mem = getMemory();
-    mem.lifeEvents = [];
-    localStorage.setItem(MEMORY_KEY, JSON.stringify(mem));
-
-    // Build relationship map from sent emails
-    updateScanMsg('Building your relationship map…', 55);
+    // Build relationship map
+    updateScanMsg('Building your relationship map...', 55);
     const recipients = {};
     details.forEach(msg => {
       const headers = msg.payload?.headers || [];
-      const to = headers.find(h => h.name === 'To')?.value || '';
-      const subject = headers.find(h => h.name === 'Subject')?.value || '';
-      const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
-      // Extract emails from To field
+      const to = headers.find(h => h.name==='To')?.value || '';
+      const subject = headers.find(h => h.name==='Subject')?.value || '';
+      const date = new Date(headers.find(h => h.name==='Date')?.value || msg.internalDate);
       const emails = to.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
       emails.forEach(email => {
-        if (!recipients[email]) recipients[email] = { count: 0, subjects: [], lastContacted: null };
+        if (!recipients[email]) recipients[email] = { count:0, subjects:[], lastContacted:null };
         recipients[email].count++;
         recipients[email].subjects.push(subject.slice(0,50));
         if (!recipients[email].lastContacted || date > new Date(recipients[email].lastContacted)) {
@@ -1629,153 +1656,92 @@ async function startSentScan() {
       });
     });
 
-    // Save top relationships
-    const topRecipients = Object.entries(recipients)
-      .sort((a,b) => b[1].count - a[1].count)
-      .slice(0, 20);
+    topRecipients = Object.entries(recipients).sort((a,b) => b[1].count - a[1].count).slice(0,20);
     topRecipients.forEach(([email, data]) => {
-      addPersonMemory(email, { sentCount: data.count, lastContacted: data.lastContacted, recentSubjects: data.subjects.slice(0,5) });
+      addPersonMemory(email, { sentCount:data.count, lastContacted:data.lastContacted, recentSubjects:data.subjects.slice(0,5) });
     });
 
-    // Quick subject-only scan on ALL 100 sent emails for life events
-    updateScanMsg('Scanning email subjects for life events…', 65);
-
-    // Keyword lists defined HERE before any usage
-    const skipKeywordsList = ['package on the move', 'out for delivery', 'your order has shipped', 'tracking number', 'unsubscribe', 'click to unsubscribe', 'marketing email', 'promotional', 'flash sale', 'limited time offer', 'coupon code'];
-    const lifeEventKeywords = {
-      medical: ['appointment', 'doctor', 'dr.', 'clinic', 'hospital', 'pharmacy', 'prescription', 'lab result', 'checkup', 'dental', 'optometrist', 'pediatrician', 'vaccination', 'urgent care', 'specialist', 'physical exam', 'blood test', 'health'],
-      automotive: ['car service', 'oil change', 'tire', 'vehicle service', 'mechanic', 'auto repair', 'dealership', 'service reminder', 'volvo', 'registration due', 'inspection due', 'scheduled service'],
-      financial: ['insurance', 'renewal', 'payment due', 'tax', 'open enrollment', 'benefits', 'premium', 'policy', 'invoice due', 'subscription', 'annual fee', 'deductible', 'refund'],
-      family: ['birthday', 'anniversary', 'graduation', 'wedding', 'baby shower', 'family reunion', 'permission slip', 'rsvp', 'celebrate', 'party invite'],
-      home: ['HOA', 'pest control', 'plumber', 'electrician', 'repair', 'warranty', 'lease', 'mortgage', 'home service', 'maintenance due'],
-      school: ['staar', 'report card', 'parent teacher', 'conference', 'field trip', 'enrollment', 'iep', 'progress report', 'grade', 'homework', 'semester', 'school registration', 'back to school'],
-      action: ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required', 'response needed', 'please confirm', 'sign and return', 'do not forget', 'last chance', 'urgent']
-    };
-
-    let eventsFound = 0;
-
+    // Quick subject scan on ALL sent emails
+    updateScanMsg('Scanning email subjects for life events...', 65);
     details.forEach(msg => {
       const headers = msg.payload?.headers || [];
-      const subject = headers.find(h => h.name === 'Subject')?.value || '';
-      const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
-      const subjectLower = subject.toLowerCase();
-      if (skipKeywordsList.some(k => subjectLower.includes(k))) return;
-      for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
-        if (keywords.some(k => subjectLower.includes(k))) {
-          addLifeEvent({
-            title: subject.slice(0,60),
-            category,
-            date: date.toISOString(),
-            snippet: '',
-            source: 'sent-subject'
-          });
-          eventsFound++;
-          break;
-        }
+      const subject = headers.find(h => h.name==='Subject')?.value || '';
+      const date = new Date(headers.find(h => h.name==='Date')?.value || msg.internalDate);
+      const cat = isLifeEvent(subject);
+      if (cat) {
+        addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:'', source:'sent-subject' });
+        eventsFound++;
       }
     });
 
-    updateScanMsg('Extracting life events from sent emails…', 70);
-
-    // Fetch full body of top 30 sent emails to find life events
-
-
-    // Skip list defined earlier as skipKeywordsList
-
-    for (const msg of topSent.slice(0, 40)) {
+    // Deep body scan on top 40 sent emails
+    updateScanMsg('Extracting life events from email content...', 72);
+    for (const msg of details.slice(0,40)) {
       try {
         const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
         const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,500);
         const subject = full.result.payload?.headers?.find(h=>h.name==='Subject')?.value || '';
         const date = new Date(full.result.internalDate*1);
-
-        // Check for life event keywords
-        const combined = (subject + ' ' + body).toLowerCase();
-
-        // Skip if matches negative keywords
-        if (skipKeywordsList.some(k => combined.includes(k))) continue;
-
-        // Check subject first (faster), then combined
-        const subjectOnly = subject.toLowerCase();
-        for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
-          const matchesSubject = keywords.some(k => subjectOnly.includes(k));
-          const matchesBody = keywords.some(k => combined.includes(k));
-          if (matchesSubject || matchesBody) {
-            addLifeEvent({
-              title: subject.slice(0,60),
-              category,
-              date: date.toISOString(),
-              snippet: (body || '').slice(0,120),
-              source: 'sent'
-            });
-            eventsFound++;
-            break;
-          }
+        const cat = isLifeEvent(subject + ' ' + body);
+        if (cat) {
+          addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,120), source:'sent' });
+          eventsFound++;
         }
       } catch(e) { /* skip */ }
     }
 
-    // Also scan recent INCOMING emails for life events
-    updateScanMsg('Scanning incoming emails for life events…', 72);
+    // Scan recent incoming emails too
+    updateScanMsg('Scanning incoming emails for life events...', 82);
     try {
-      const incomingResp = await gapi.client.gmail.users.messages.list({
-        userId: 'me', q: 'in:inbox', maxResults: 50
-      });
-      const incomingMsgs = incomingResp.result.messages || [];
-      const incomingDetails = await Promise.all(
-        incomingMsgs.slice(0,20).map(m =>
-          gapi.client.gmail.users.messages.get({ userId:'me', id:m.id, format:'full' })
-        )
-      );
-      for (const msg of incomingDetails) {
-        const headers = msg.result.payload?.headers || [];
-        const subject = headers.find(h=>h.name==='Subject')?.value || '';
-        const date = new Date(msg.result.internalDate*1);
-        const body = extractBody(msg.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,400);
-        const combined = (subject + ' ' + body).toLowerCase();
-        if (skipKeywordsList.some(k => combined.includes(k))) continue;
-        for (const [category, keywords] of Object.entries(lifeEventKeywords)) {
-          if (keywords.some(k => combined.includes(k))) {
-            addLifeEvent({ title: subject.slice(0,60), category, date: date.toISOString(), snippet: body.slice(0,100), source: 'inbox' });
+      const inResp = await gapi.client.gmail.users.messages.list({ userId:'me', q:'in:inbox', maxResults:50 });
+      const inMsgs = inResp.result.messages || [];
+      for (const msg of inMsgs.slice(0,20)) {
+        try {
+          const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+          const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,400);
+          const subject = full.result.payload?.headers?.find(h=>h.name==='Subject')?.value || '';
+          const date = new Date(full.result.internalDate*1);
+          const cat = isLifeEvent(subject + ' ' + body);
+          if (cat) {
+            addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,100), source:'inbox' });
             eventsFound++;
-            break;
           }
-        }
+        } catch(e) { /* skip */ }
       }
-    } catch(e) { console.error('Incoming scan error:', e); }
+    } catch(e) { console.error('Inbox scan error:', e); }
 
-    updateScanMsg('Analysing patterns with AI…', 85);
-
-    // Send top relationships to Claude for insight
-    const topNames = topRecipients.slice(0,10).map(([email, d]) => `${email} (${d.count} emails)`).join(', ');
+    // AI insight
+    updateScanMsg('Analysing patterns with AI...', 88);
+    const topNames = topRecipients.slice(0,10).map(([email,d]) => `${email} (${d.count} emails)`).join(', ');
     try {
-      const insightResp = await callClaude(`Based on these sent email patterns for ${document.getElementById('user-name')?.textContent || 'the user'}, write 2-3 sentences of insight about their communication style and key relationships. Be warm and personal.
+      const resp = await callClaude(`Based on these sent email patterns for ${document.getElementById('user-name')?.textContent || 'this user'}, write 2-3 warm sentences about their communication style and key relationships.
 
 Top recipients: ${topNames}
-Total sent emails analysed: ${details.length}
+Total sent: ${details.length}, Life events found: ${eventsFound}
 
-Respond in JSON: {"insight":"...","writingStyle":"...","topRelationship":"..."}`);
+JSON: {"insight":"...","topRelationship":"..."}`);
+      const text = resp.content?.[0]?.text || '{}';
+      const parsed = JSON.parse(text.replace(/\`\`\`json|\`\`\`/g,'').trim());
+      saveMemory({ sentInsight:parsed, sentScanDate:new Date().toISOString(), sentCount:details.length, relationshipCount:topRecipients.length });
 
-      const insightText = insightResp.content?.[0]?.text || '{}';
-      const insight = JSON.parse(insightText.replace(/```json|```/g,'').trim());
-      saveMemory({ sentInsight: insight, sentScanDate: new Date().toISOString(), sentCount: details.length, relationshipCount: topRecipients.length });
-
-      updateScanMsg('Done!', 100);
-
-      // Show results
       document.getElementById('memory-setup-stats').innerHTML = `
         <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-bottom:12px;">
           <span class="memory-stat">${details.length} sent emails scanned</span>
           <span class="memory-stat">${topRecipients.length} relationships mapped</span>
           <span class="memory-stat">${eventsFound} life events found</span>
         </div>
-        <p style="font-size:12.5px;color:var(--ink-2);line-height:1.6;text-align:left;background:var(--accent-light);border-radius:8px;padding:10px 13px;">${insight.insight || 'Profile enriched successfully.'}</p>
-      `;
+        <p style="font-size:12.5px;color:var(--ink-2);line-height:1.6;text-align:left;background:var(--accent-light);border-radius:8px;padding:10px 13px;">${parsed.insight || 'Profile enriched.'}</p>`;
     } catch(e) {
-      saveMemory({ sentScanDate: new Date().toISOString(), sentCount: details.length });
-      document.getElementById('memory-setup-stats').innerHTML = `<span class="memory-stat">${details.length} sent emails scanned</span> <span class="memory-stat">${topRecipients.length} relationships mapped</span> <span class="memory-stat">${eventsFound} life events found</span>`;
+      saveMemory({ sentScanDate:new Date().toISOString(), sentCount:details.length });
+      document.getElementById('memory-setup-stats').innerHTML = `
+        <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;">
+          <span class="memory-stat">${details.length} sent emails scanned</span>
+          <span class="memory-stat">${topRecipients.length} relationships mapped</span>
+          <span class="memory-stat">${eventsFound} life events found</span>
+        </div>`;
     }
 
+    updateScanMsg('Done!', 100);
     document.getElementById('memory-setup-close').style.display = 'inline-block';
 
   } catch(e) {
@@ -1784,260 +1750,4 @@ Respond in JSON: {"insight":"...","writingStyle":"...","topRelationship":"..."}`
   }
 }
 
-function updateScanMsg(msg, pct) {
-  document.getElementById('memory-setup-msg').textContent = msg;
-  document.getElementById('memory-progress-bar').style.width = pct + '%';
-}
 
-function closeMemorySetup() {
-  document.getElementById('memory-setup-overlay').classList.remove('open');
-  renderLifeEventsSidebar();
-  // Open profile to show what was found
-  openProfile();
-  // Show life events tab in profile
-  showLifeEventsInProfile();
-}
-
-function showLifeEventsInProfile() {
-  const mem = getMemory();
-  const events = mem.lifeEvents || [];
-  if (!events.length) return;
-
-  // Find or create life events section in profile modal
-  let eventsSection = document.getElementById('profile-life-events');
-  if (!eventsSection) {
-    eventsSection = document.createElement('div');
-    eventsSection.id = 'profile-life-events';
-    eventsSection.style.cssText = 'margin-top:16px;padding-top:16px;border-top:0.5px solid var(--border);';
-    const modal = document.querySelector('.profile-modal');
-    if (modal) modal.appendChild(eventsSection);
-  }
-
-  const categoryColors = {
-    medical: { bg:'#fee2e2', color:'#dc2626', icon:'🏥' },
-    automotive: { bg:'#fef3c7', color:'#b45309', icon:'🚗' },
-    financial: { bg:'#dbeafe', color:'#1d4ed8', icon:'💰' },
-    family: { bg:'#dcfce7', color:'#15803d', icon:'🎂' },
-    home: { bg:'#f3e8ff', color:'#7c3aed', icon:'🏠' },
-    school: { bg:'#e0f2fe', color:'#0369a1', icon:'🎓' }
-  };
-
-  eventsSection.innerHTML = `
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--ink-3);margin-bottom:10px;">
-      ${events.length} life events found in your emails
-    </div>
-    ${events.slice(0,8).map(e => {
-      const cat = categoryColors[e.category] || { bg:'#f1f5f9', color:'#475569', icon:'📧' };
-      const date = e.date ? new Date(e.date).toLocaleDateString([], {month:'short', day:'numeric', year:'numeric'}) : '';
-      return `
-        <div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:0.5px solid var(--border);">
-          <div style="width:26px;height:26px;border-radius:6px;background:${cat.bg};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">${cat.icon}</div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:12px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.title}</div>
-            <div style="font-size:10.5px;color:var(--ink-3);">${e.category} · ${date}</div>
-          </div>
-        </div>
-      `;
-    }).join('')}
-  `;
-}
-
-function renderLifeEventsSidebar() {
-  const events = getUpcomingEvents(30);
-  if (!events.length) return;
-  const chips = document.getElementById('context-chips');
-  if (!chips) return;
-  events.slice(0,3).forEach(e => {
-    const chip = document.createElement('span');
-    chip.className = 'mem-chip chip-w';
-    const daysAway = Math.ceil((new Date(e.date) - new Date()) / 86400000);
-    chip.textContent = e.title.slice(0,20) + (daysAway <= 7 ? ' ⚡' : '');
-    chip.title = e.title + ' — ' + new Date(e.date).toLocaleDateString();
-    chips.appendChild(chip);
-  });
-}
-
-// ── AUTO DEPLOY ──
-async function deployUpdate() {
-  const token = localStorage.getItem('memail_github_token');
-  const secret = localStorage.getItem('memail_deploy_secret');
-  if (!token || !secret) {
-    showToast('⚠️ Set memail_github_token and memail_deploy_secret in console first');
-    return;
-  }
-
-  const btn = document.getElementById('deploy-btn');
-  btn.textContent = '⏳ Deploying…';
-  btn.disabled = true;
-
-  try {
-    showToast('Fetching latest build…');
-
-    // Always fetch _claude_deploy.html from GitHub — never use browser DOM
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    let latestCode;
-    try {
-      const sourceResp = await fetch(
-        'https://raw.githubusercontent.com/vsrinath81/memail/main/_claude_deploy.html?t=' + Date.now(),
-        { signal: controller.signal }
-      );
-      clearTimeout(timeout);
-      if (!sourceResp.ok) throw new Error('Could not fetch latest build: ' + sourceResp.status);
-      latestCode = await sourceResp.text();
-    } catch(fetchErr) {
-      clearTimeout(timeout);
-      throw new Error('Fetch failed: ' + fetchErr.message);
-    }
-
-    showToast('Deploying to live site…');
-
-    // Push via Cloudflare Worker to index.html
-    const resp = await fetch('https://bold-lake-b876.vsrinath81.workers.dev/deploy', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-deploy-token': secret
-      },
-      body: JSON.stringify({
-        github_token: token,
-        owner: 'vsrinath81',
-        repo: 'memail',
-        content: latestCode,
-        message: `Auto-deploy from memáil: ${new Date().toUTCString()}`
-      })
-    });
-
-    const result = await resp.json();
-    if (result.success) {
-      showToast(`✅ Deployed! Commit ${result.commit} — live in ~60s`);
-    } else {
-      showToast('❌ Deploy failed: ' + (result.error || 'unknown'));
-    }
-  } catch(e) {
-    showToast('❌ Deploy error: ' + e.message);
-  } finally {
-    btn.textContent = 'Deploy';
-    btn.disabled = false;
-  }
-}
-
-// ── USER PROFILE ──
-let userProfile = { name: '', aliases: [], context: '' };
-
-// ── SENDER RULES ──
-function getSenderRules() {
-  try { return JSON.parse(localStorage.getItem('memail_sender_rules') || '{}'); } catch(e) { return {}; }
-}
-function addSenderRule(email, rule) {
-  const rules = getSenderRules();
-  rules[email.toLowerCase()] = rule;
-  localStorage.setItem('memail_sender_rules', JSON.stringify(rules));
-}
-function getSenderRule(email) {
-  const rules = getSenderRules();
-  return rules[email.toLowerCase()] || null;
-}
-
-function loadProfile() {
-  try { userProfile = JSON.parse(localStorage.getItem('memail_profile') || '{}'); } catch(e) {}
-  userProfile.name = userProfile.name || '';
-  userProfile.aliases = userProfile.aliases || [];
-  userProfile.context = userProfile.context || '';
-}
-
-function saveProfile() {
-  userProfile.name = document.getElementById('profile-name').value.trim();
-  userProfile.context = document.getElementById('profile-context').value.trim();
-  localStorage.setItem('memail_profile', JSON.stringify(userProfile));
-  closeProfile();
-  showToast('Profile saved! Memory will use your context from now on.');
-}
-
-function openProfile() {
-  loadProfile();
-  document.getElementById('profile-name').value = userProfile.name;
-  document.getElementById('profile-context').value = userProfile.context;
-  renderAliases();
-  // Auto-add all connected accounts as aliases
-  accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
-  renderAliases();
-  document.getElementById('profile-modal-overlay').classList.add('open');
-}
-
-function closeProfile() { document.getElementById('profile-modal-overlay').classList.remove('open'); }
-function closeProfileIfOutside(e) { if (e.target.id === 'profile-modal-overlay') closeProfile(); }
-
-function addAlias() {
-  const input = document.getElementById('alias-input');
-  const val = input.value.trim().toLowerCase();
-  if (!val) return;
-  if (!userProfile.aliases.includes(val)) userProfile.aliases.push(val);
-  input.value = '';
-  renderAliases();
-}
-
-function removeAlias(alias) {
-  userProfile.aliases = userProfile.aliases.filter(a => a !== alias);
-  renderAliases();
-}
-
-function renderAliases() {
-  const list = document.getElementById('alias-list');
-  if (!list) return;
-  list.innerHTML = userProfile.aliases.map(a => `
-    <div class="alias-chip">
-      ${a}
-      <button onclick="removeAlias('${a}')" title="Remove">×</button>
-    </div>
-  `).join('');
-}
-
-function getProfileContext() {
-  loadProfile();
-  const mem = getMemory();
-  const parts = [];
-  if (userProfile.name) parts.push(`User's name: ${userProfile.name}`);
-  if (userProfile.aliases.length) parts.push(`All email addresses belonging to this user: ${userProfile.aliases.join(', ')}`);
-  if (userProfile.context) parts.push(`Life context: ${userProfile.context}`);
-  if (mem.sentInsight?.insight) parts.push(`Communication insight from sent emails: ${mem.sentInsight.insight}`);
-  if (mem.sentInsight?.topRelationship) parts.push(`Most important relationship: ${mem.sentInsight.topRelationship}`);
-  const upcomingEvents = getUpcomingEvents(14);
-  if (upcomingEvents.length) {
-    parts.push(`Upcoming life events (next 14 days): ${upcomingEvents.map(e => e.title + ' (' + new Date(e.date).toLocaleDateString() + ')').join(', ')}`);
-  }
-  return parts.join('\n');
-}
-
-function signOut() {
-  if (accessToken) google.accounts.oauth2.revoke(accessToken);
-  accessToken = null;
-  accounts = [];
-  localStorage.removeItem('memail_accounts');
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('auth-screen').style.display = 'flex';
-  document.getElementById('auth-btn').disabled = false;
-  document.getElementById('auth-btn').textContent = 'Connect Gmail →';
-}
-
-// ── UTILS ──
-function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
-}
-
-// Auto-fill client ID if saved
-window.addEventListener('DOMContentLoaded', () => {
-  const savedId = localStorage.getItem('memail_client_id');
-  if (savedId) document.getElementById('client-id-input').value = savedId;
-  const savedKey = localStorage.getItem('memail_api_key');
-  if (savedKey) document.getElementById('api-key-input').value = savedKey;
-  loadAccounts();
-  loadProfile();
-});
-</script>
-</body>
-</html>
