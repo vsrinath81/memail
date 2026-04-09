@@ -1652,6 +1652,8 @@ async function startSentScan() {
       action: ['deadline', 'expires', 'expiring', 'due date', 'reminder', 'action required', 'response needed', 'please confirm', 'sign and return', 'do not forget', 'last chance', 'urgent']
     };
 
+    let eventsFound = 0;
+
     details.forEach(msg => {
       const headers = msg.payload?.headers || [];
       const subject = headers.find(h => h.name === 'Subject')?.value || '';
@@ -1680,7 +1682,6 @@ async function startSentScan() {
 
     // Skip list defined earlier as skipKeywordsList
 
-    let eventsFound = 0;
     for (const msg of topSent.slice(0, 40)) {
       try {
         const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
