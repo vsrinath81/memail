@@ -1758,6 +1758,242 @@ JSON: {"insight":"...","topRelationship":"..."}`);
 }
 
 
+// ── SHOW TOAST ──
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ── SIGN OUT ──
+function signOut() {
+  if (typeof google !== 'undefined' && accessToken) google.accounts.oauth2.revoke(accessToken);
+  accessToken = null;
+  accounts = [];
+  localStorage.removeItem('memail_accounts');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('auth-btn').disabled = false;
+  document.getElementById('auth-btn').textContent = 'Connect Gmail →';
+}
+
+// ── SENDER RULES ──
+function getSenderRules() {
+  try { return JSON.parse(localStorage.getItem('memail_sender_rules') || '{}'); } catch(e) { return {}; }
+}
+function addSenderRule(email, rule) {
+  const rules = getSenderRules();
+  rules[email.toLowerCase()] = rule;
+  localStorage.setItem('memail_sender_rules', JSON.stringify(rules));
+}
+function getSenderRule(email) {
+  return getSenderRules()[email.toLowerCase()] || null;
+}
+
+// ── USER PROFILE ──
+let userProfile = { name: '', aliases: [], context: '' };
+
+function loadProfile() {
+  try { userProfile = JSON.parse(localStorage.getItem('memail_profile') || '{}'); } catch(e) {}
+  userProfile.name = userProfile.name || '';
+  userProfile.aliases = userProfile.aliases || [];
+  userProfile.context = userProfile.context || '';
+}
+
+function saveProfile() {
+  userProfile.name = document.getElementById('profile-name').value.trim();
+  userProfile.context = document.getElementById('profile-context').value.trim();
+  localStorage.setItem('memail_profile', JSON.stringify(userProfile));
+  closeProfile();
+  showToast('Profile saved!');
+}
+
+function openProfile() {
+  loadProfile();
+  document.getElementById('profile-name').value = userProfile.name;
+  document.getElementById('profile-context').value = userProfile.context;
+  accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
+  renderAliases();
+  showLifeEventsInProfile();
+  document.getElementById('profile-modal-overlay').classList.add('open');
+}
+
+function closeProfile() { document.getElementById('profile-modal-overlay').classList.remove('open'); }
+function closeProfileIfOutside(e) { if (e.target.id === 'profile-modal-overlay') closeProfile(); }
+
+function addAlias() {
+  const input = document.getElementById('alias-input');
+  const val = input.value.trim().toLowerCase();
+  if (!val) return;
+  if (!userProfile.aliases.includes(val)) userProfile.aliases.push(val);
+  input.value = '';
+  renderAliases();
+}
+
+function removeAlias(alias) {
+  userProfile.aliases = userProfile.aliases.filter(a => a !== alias);
+  renderAliases();
+}
+
+function renderAliases() {
+  const list = document.getElementById('alias-list');
+  if (!list) return;
+  list.innerHTML = userProfile.aliases.map(a => `
+    <div class="alias-chip">
+      ${a}
+      <button onclick="removeAlias('${a}')" title="Remove">×</button>
+    </div>
+  `).join('');
+}
+
+function getProfileContext() {
+  loadProfile();
+  const mem = getMemory();
+  const parts = [];
+  if (userProfile.name) parts.push(`User's name: ${userProfile.name}`);
+  if (userProfile.aliases.length) parts.push(`All email addresses belonging to this user: ${userProfile.aliases.join(', ')}`);
+  if (userProfile.context) parts.push(`Life context: ${userProfile.context}`);
+  if (mem.sentInsight?.insight) parts.push(`Communication insight: ${mem.sentInsight.insight}`);
+  const upcomingEvents = getUpcomingEvents(14);
+  if (upcomingEvents.length) {
+    parts.push(`Upcoming life events (next 14 days): ${upcomingEvents.map(e => e.title + ' (' + new Date(e.date).toLocaleDateString() + ')').join(', ')}`);
+  }
+  return parts.join('\n');
+}
+
+function showLifeEventsInProfile() {
+  const mem = getMemory();
+  const events = mem.lifeEvents || [];
+  let eventsSection = document.getElementById('profile-life-events');
+  if (!eventsSection) {
+    eventsSection = document.createElement('div');
+    eventsSection.id = 'profile-life-events';
+    eventsSection.style.cssText = 'margin-top:16px;padding-top:16px;border-top:0.5px solid var(--border);';
+    const modal = document.querySelector('.profile-modal');
+    if (modal) modal.appendChild(eventsSection);
+  }
+  if (!events.length) { eventsSection.innerHTML = ''; return; }
+  const categoryColors = {
+    medical: { bg:'#fee2e2', color:'#dc2626', icon:'🏥' },
+    automotive: { bg:'#fef3c7', color:'#b45309', icon:'🚗' },
+    financial: { bg:'#dbeafe', color:'#1d4ed8', icon:'💰' },
+    family: { bg:'#dcfce7', color:'#15803d', icon:'🎂' },
+    home: { bg:'#f3e8ff', color:'#7c3aed', icon:'🏠' },
+    school: { bg:'#e0f2fe', color:'#0369a1', icon:'🎓' },
+    action: { bg:'#fef9c3', color:'#854d0e', icon:'🔔' }
+  };
+  eventsSection.innerHTML = `
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--ink-3);margin-bottom:10px;">
+      ${events.length} life events found in your emails
+    </div>
+    ${events.slice(0,10).map(e => {
+      const cat = categoryColors[e.category] || { bg:'#f1f5f9', color:'#475569', icon:'📧' };
+      const date = e.date ? new Date(e.date).toLocaleDateString([], {month:'short', day:'numeric', year:'numeric'}) : '';
+      return `<div style="display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:0.5px solid var(--border);">
+        <div style="width:26px;height:26px;border-radius:6px;background:${cat.bg};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">${cat.icon}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(e.title)}</div>
+          <div style="font-size:10.5px;color:var(--ink-3);">${e.category} · ${date}</div>
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+
+function renderLifeEventsSidebar() {
+  const events = getUpcomingEvents(30);
+  if (!events.length) return;
+  const chips = document.getElementById('context-chips');
+  if (!chips) return;
+  events.slice(0,3).forEach(e => {
+    const chip = document.createElement('span');
+    chip.className = 'mem-chip chip-w';
+    const daysAway = Math.ceil((new Date(e.date) - new Date()) / 86400000);
+    chip.textContent = e.title.slice(0,20) + (daysAway <= 7 ? ' ⚡' : '');
+    chip.title = e.title + ' — ' + new Date(e.date).toLocaleDateString();
+    chips.appendChild(chip);
+  });
+}
+
+// ── DEPLOY UPDATE ──
+async function deployUpdate() {
+  const token = localStorage.getItem('memail_github_token');
+  const secret = localStorage.getItem('memail_deploy_secret');
+  if (!token || !secret) {
+    showToast('⚠️ Set memail_github_token and memail_deploy_secret in console first');
+    return;
+  }
+  const btn = document.getElementById('deploy-btn');
+  btn.textContent = '⏳ Deploying…';
+  btn.disabled = true;
+  try {
+    showToast('Fetching latest build…');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const sourceResp = await fetch(
+      'https://raw.githubusercontent.com/vsrinath81/memail/main/_claude_deploy.html?t=' + Date.now(),
+      { signal: controller.signal }
+    );
+    clearTimeout(timeout);
+    if (!sourceResp.ok) throw new Error('Could not fetch latest build: ' + sourceResp.status);
+    const latestCode = await sourceResp.text();
+    showToast('Deploying to live site…');
+    const resp = await fetch('https://bold-lake-b876.vsrinath81.workers.dev/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-deploy-token': secret },
+      body: JSON.stringify({
+        github_token: token, owner: 'vsrinath81', repo: 'memail',
+        content: latestCode, message: `Auto-deploy from memáil: ${new Date().toUTCString()}`
+      })
+    });
+    const result = await resp.json();
+    if (result.success) {
+      showToast(`✅ Deployed! Commit ${result.commit} — live in ~60s`);
+    } else {
+      showToast('❌ Deploy failed: ' + (result.error || 'unknown'));
+    }
+  } catch(e) {
+    showToast('❌ Deploy error: ' + e.message);
+  } finally {
+    btn.textContent = 'Deploy';
+    btn.disabled = false;
+  }
+}
+
+// ── SEARCH ──
+async function handleSearch(e) {
+  if (e.key !== 'Enter') return;
+  const q = document.getElementById('search-input').value.trim();
+  if (!q) return;
+  document.getElementById('list-title').textContent = `"${q}"`;
+  await fetchEmails(q, 20);
+}
+
+// ── REPLY ──
+function replyToEmail() {
+  document.getElementById('reply-area').style.display = 'block';
+  document.getElementById('reply-box').focus();
+}
+
+function useDraft() {
+  document.getElementById('reply-box').value = draftText;
+}
+
+function buildRawEmail(to, subject, body) {
+  const msg = [`To: ${to}`, `Subject: ${subject}`, 'Content-Type: text/plain; charset=UTF-8', '', body].join('\r\n');
+  return btoa(unescape(encodeURIComponent(msg))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+// ── DOM LOAD ──
+window.addEventListener('DOMContentLoaded', () => {
+  const savedId = localStorage.getItem('memail_client_id');
+  if (savedId) document.getElementById('client-id-input').value = savedId;
+  const savedKey = localStorage.getItem('memail_api_key');
+  if (savedKey) document.getElementById('api-key-input').value = savedKey;
+  loadAccounts();
+  loadProfile();
+});
+
 </script>
 </body>
 </html>
