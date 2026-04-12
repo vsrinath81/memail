@@ -2183,6 +2183,8 @@ window.addEventListener('DOMContentLoaded', () => {
     if (!userProfile.context) userProfile.context = 'Family of 4 living in Katy TX. Program Manager at HCLTech. Daughters: Shrutha (Harmony Public School, 7th grade), Shristhi (Olga Leonard Elementary). Spouse: Varsha. Bought home in Katy TX in 2022 so Zillow emails are casual browsing. Open to senior delivery manager or TPM roles.';
     localStorage.setItem('memail_profile', JSON.stringify(userProfile));
   }
+  // Clean up stale auto-discovered events (older than 30 days, not manual)
+  purgeStaleLifeEvents();
   setTimeout(() => { renderLifeEventsPanel(); initDividers(); }, 500);
 });
 
@@ -2437,6 +2439,32 @@ function setupDivider(dividerId, leftId, rightId, leftMin, leftMax, rightMin, ri
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   });
+}
+
+function purgeStaleLifeEvents() {
+  const mem = getMemory();
+  if (!mem.lifeEvents || !mem.lifeEvents.length) return;
+  const now = new Date();
+  const in30 = new Date(now.getTime() + 30 * 86400000);
+  const before = mem.lifeEvents.length;
+
+  mem.lifeEvents = mem.lifeEvents.filter(ev => {
+    // Always keep manual entries
+    if (ev.source === 'manual') return true;
+    // Always keep completed items (for Done section)
+    if (ev.completed) return true;
+    // Keep if no date (will go to tracking)
+    if (!ev.date) return false;
+    const d = new Date(ev.date);
+    // Keep only events in the next 30 days
+    return d >= now && d <= in30;
+  });
+
+  const after = mem.lifeEvents.length;
+  if (before !== after) {
+    localStorage.setItem('memail_persistent_memory', JSON.stringify(mem));
+    console.log(`Purged ${before - after} stale life events`);
+  }
 }
 
 function toggleDoneSection() {
