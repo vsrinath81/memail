@@ -1766,6 +1766,22 @@ JSON: {"insight":"...","topRelationship":"..."}`);
 }
 
 
+// ── SCAN PROGRESS ──
+function closeMemorySetup() {
+  document.getElementById('memory-setup-overlay').classList.remove('open');
+  renderLifeEventsSidebar();
+  openProfile();
+  showLifeEventsInProfile();
+}
+
+
+function updateScanMsg(msg, pct) {
+  const el = document.getElementById('memory-setup-msg');
+  const bar = document.getElementById('memory-progress-bar');
+  if (el) el.textContent = msg;
+  if (bar) bar.style.width = pct + '%';
+}
+
 // ── SHOW TOAST ──
 function showToast(msg) {
   const t = document.getElementById('toast');
