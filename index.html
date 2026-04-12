@@ -443,11 +443,6 @@
     </div>
 
     <div class="memory-panel" style="margin-top:10px">
-      <div class="mem-head">Active context</div>
-      <div class="mem-chips" id="context-chips">
-        <span class="loading-chips">Loading from your inbox…</span>
-      </div>
-
       <!-- Life Events Panel -->
       <div class="life-panel" id="life-panel">
         <div class="life-panel-header">
@@ -1641,6 +1636,78 @@ function getUpcomingEvents(days = 30) {
 }
 
 // ── SENT EMAIL SCAN ──
+
+// ── DATE EXTRACTION FROM EMAIL BODY ──
+function extractDateFromText(text) {
+  const now = new Date();
+  const yr = now.getFullYear();
+  const candidates = [];
+
+  const monthNames = 'january|february|march|april|may|june|july|august|september|october|november|december';
+  const monthShort = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec';
+
+  const patterns = [
+    // 04/24/2026
+    /(0?[1-9]|1[0-2])\/(0?[1-9]|[12]\d|3[01])\/(20\d{2})/g,
+    // April 24, 2026 or April 24th
+    new RegExp('\\b(' + monthNames + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s*(20\\d{2}))?\\b', 'gi'),
+    // Apr 24 or Apr. 24
+    new RegExp('\\b(' + monthShort + ')\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s*(20\\d{2}))?\\b', 'gi'),
+  ];
+
+  for (const re of patterns) {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      try {
+        const d = new Date(m[0].replace(/(\d+)(st|nd|rd|th)/g, '$1'));
+        if (!isNaN(d.getTime())) {
+          const diff = (d - now) / 86400000;
+          if (diff > -7 && diff < 365) candidates.push(d);
+        }
+      } catch(e) {}
+    }
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort((a,b) => {
+    const da = Math.abs(a - now), db = Math.abs(b - now);
+    return da - db;
+  });
+  return candidates[0];
+}
+
+function extractEventFromBody(subject, body, msgId, emailDate) {
+  const combined = (subject + ' ' + body).toLowerCase();
+  const events = [];
+
+  const triggers = [
+    'your appointment', 'appointment confirmation', 'appointment scheduled',
+    'appointment on', 'scheduled for', 'your visit', 'confirmed for',
+    'staar', 'test date', 'field trip on', 'due date', 'deadline',
+    'passport appointment', 'expires on', 'renewal date', 'valid until',
+    'interview on', 'orientation on', 'reminder: appointment'
+  ];
+
+  if (!triggers.some(t => combined.includes(t))) return events;
+
+  const extractedDate = extractDateFromText(body + ' ' + subject);
+  const useDate = extractedDate || new Date(emailDate);
+
+  let category = 'action';
+  if (['doctor','dr.','clinic','hospital','dental','dermatology','pediatric','medical','memorial hermann','optometrist','physician'].some(t => combined.includes(t))) category = 'medical';
+  else if (['car','auto','vehicle','klt','tire','oil change','mechanic','dealership'].some(t => combined.includes(t))) category = 'automotive';
+  else if (['staar','school','harmony','elementary','teacher','field trip','grade'].some(t => combined.includes(t))) category = 'school';
+  else if (['insurance','tax','payment','renewal','policy','premium'].some(t => combined.includes(t))) category = 'financial';
+
+  const cleanTitle = subject.replace(/^(re|fwd?|fw):\s*/gi,'').trim().slice(0,55);
+  const timeMatch = body.match(/(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))/);
+  const timeStr = timeMatch ? timeMatch[1] : '';
+
+  events.push({ title:cleanTitle, category, date:useDate.toISOString(), snippet:body.slice(0,150), source:'appointment', msgId, extractedDate:!!extractedDate, timeStr });
+  return events;
+}
+
 async function startSentScan() {
   closeProfile();
   document.getElementById('memory-setup-overlay').classList.add('open');
@@ -1752,8 +1819,14 @@ async function startSentScan() {
         const date = new Date(full.result.internalDate*1);
         const cat = isLifeEvent(subject + ' ' + body);
         if (cat) {
-          addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,120), source:'sent', msgId:msg.id });
-          eventsFound++;
+          // Try to extract precise date from body
+          const extracted = extractEventFromBody(subject, body, msg.id, date.toISOString());
+          if (extracted.length) {
+            extracted.forEach(ev => { addLifeEvent(ev); eventsFound++; });
+          } else {
+            addLifeEvent({ title:subject.replace(/^(re|fwd?|fw):\s*/gi,'').trim().slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,120), source:'sent', msgId:msg.id });
+            eventsFound++;
+          }
         }
       } catch(e) { /* skip slow/failing emails */ }
       if (bi % 5 === 0) updateScanMsg(`Scanning email content... ${bi+1}/20`, 72 + bi);
@@ -1816,8 +1889,13 @@ async function startSentScan() {
           const date = new Date(full.result.internalDate*1);
           const cat = isLifeEvent(subject + ' ' + body);
           if (cat) {
-            addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,100), source:'inbox', msgId:msg.id });
-            eventsFound++;
+            const extracted = extractEventFromBody(subject, body, msg.id, date.toISOString());
+            if (extracted.length) {
+              extracted.forEach(ev => { addLifeEvent(ev); eventsFound++; });
+            } else {
+              addLifeEvent({ title:subject.replace(/^(re|fwd?|fw):\s*/gi,'').trim().slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,100), source:'inbox', msgId:msg.id });
+              eventsFound++;
+            }
           }
         } catch(e) { /* skip */ }
       }
@@ -2325,7 +2403,7 @@ function renderLifeEventsPanel() {
         <span class="life-event-icon">${icon}</span>
         <div class="life-event-info">
           <div class="life-event-name">${titleSafe}${noteIndicator}</div>
-          <div class="life-event-meta">${isOverdue ? '⚡ overdue · ' : ''}${dateStr}</div>
+          <div class="life-event-meta">${isOverdue ? '⚡ overdue · ' : ''}${dateStr}${ev.timeStr ? ' · ' + ev.timeStr : ''}${ev.extractedDate ? ' 📍' : ''}</div>
           <div class="life-event-actions">
             ${showDone ? `<button class="life-event-btn done-btn" onclick="markEventDone('${escapedTitle}')">✅ Done</button>` : ''}
             <button class="life-event-btn" onclick="addEventNote('${escapedTitle}')">📝 Note</button>
