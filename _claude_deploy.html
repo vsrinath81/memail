@@ -549,7 +549,7 @@
 </div>
 
 <!-- PROFILE MODAL -->
-<div class="profile-modal-overlay" id="profile-modal-overlay" onclick="closeProfileIfOutside(event)">
+<div class="profile-modal-overlay" id="profile-modal-overlay">
   <div class="profile-modal">
     <h2>Your profile</h2>
     <p>Tell memáil about yourself so the AI memory feels personal across all your accounts.</p>
@@ -581,8 +581,10 @@
         Scan sent emails to enrich profile
       </button>
     </div>
+    <div id="profile-unsaved" style="display:none;font-size:11px;color:var(--warm);background:var(--warm-light);padding:5px 10px;border-radius:5px;margin-bottom:8px;text-align:center;">⚠️ Unsaved changes — click Save profile</div>
+    <div id="profile-last-saved" style="font-size:10px;color:var(--ink-3);text-align:center;margin-bottom:8px;"></div>
     <button class="profile-save-btn" onclick="saveProfile()">Save profile</button>
-    <button onclick="closeProfile()" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-3);font-family:var(--font-ui);font-size:13px;cursor:pointer;padding:6px">Cancel</button>
+    <button onclick="safeCloseProfile()" style="width:100%;margin-top:8px;background:none;border:none;color:var(--ink-3);font-family:var(--font-ui);font-size:13px;cursor:pointer;padding:6px">Close</button>
   </div>
 </div>
 
@@ -1935,14 +1937,31 @@ function loadProfile() {
 function saveProfile() {
   userProfile.name = document.getElementById('profile-name').value.trim();
   userProfile.context = document.getElementById('profile-context').value.trim();
-  // aliases already updated via addAlias/removeAlias - just ensure connected accounts are included
+  userProfile.lastSaved = new Date().toISOString();
   accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
   localStorage.setItem('memail_profile', JSON.stringify(userProfile));
-  // Also save a default profile flag so we know it was explicitly saved
   localStorage.setItem('memail_profile_saved', '1');
-  closeProfile();
   renderLifeEventsPanel();
+  showUnsavedState(false);
+  // Show confirmation inline instead of closing
+  const btn = document.querySelector('.profile-save-btn');
+  if (btn) {
+    btn.textContent = '✓ Saved!';
+    btn.style.background = '#15803d';
+    setTimeout(() => {
+      btn.textContent = 'Save profile';
+      btn.style.background = '';
+    }, 2000);
+  }
   showToast('Profile saved!');
+}
+
+function showUnsavedState(unsaved) {
+  const indicator = document.getElementById('profile-unsaved');
+  if (indicator) indicator.style.display = unsaved ? 'block' : 'none';
+  const btn = document.querySelector('.profile-save-btn');
+  if (btn && unsaved) btn.style.boxShadow = '0 0 0 2px var(--accent)';
+  else if (btn) btn.style.boxShadow = '';
 }
 
 function openProfile() {
@@ -1952,11 +1971,22 @@ function openProfile() {
   if (nameEl) {
     nameEl.value = userProfile.name;
     nameEl.placeholder = userProfile.name ? '' : 'e.g. Srinath';
+    nameEl.oninput = () => showUnsavedState(true);
   }
   if (ctxEl) {
     ctxEl.value = userProfile.context;
     ctxEl.placeholder = userProfile.context ? '' : 'e.g. Family of 4 in Katy TX...';
+    ctxEl.oninput = () => showUnsavedState(true);
   }
+  // Show last saved time
+  const lastSaved = userProfile.lastSaved;
+  const savedEl = document.getElementById('profile-last-saved');
+  if (savedEl) {
+    savedEl.textContent = lastSaved
+      ? 'Last saved: ' + new Date(lastSaved).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})
+      : 'Not saved yet';
+  }
+  showUnsavedState(false);
   accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
   renderAliases();
   showLifeEventsInProfile();
@@ -1964,6 +1994,13 @@ function openProfile() {
 }
 
 function closeProfile() { document.getElementById('profile-modal-overlay').classList.remove('open'); }
+function safeCloseProfile() {
+  const unsaved = document.getElementById('profile-unsaved');
+  if (unsaved && unsaved.style.display !== 'none') {
+    if (!confirm('You have unsaved changes. Close without saving?')) return;
+  }
+  closeProfile();
+}
 function closeProfileIfOutside(e) { if (e.target.id === 'profile-modal-overlay') closeProfile(); }
 
 function addAlias() {
@@ -1973,11 +2010,15 @@ function addAlias() {
   if (!userProfile.aliases.includes(val)) userProfile.aliases.push(val);
   input.value = '';
   renderAliases();
+  // Auto-save aliases immediately
+  localStorage.setItem('memail_profile', JSON.stringify(userProfile));
+  showUnsavedState(false);
 }
 
 function removeAlias(alias) {
   userProfile.aliases = userProfile.aliases.filter(a => a !== alias);
   renderAliases();
+  localStorage.setItem('memail_profile', JSON.stringify(userProfile));
 }
 
 function renderAliases() {
