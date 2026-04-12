@@ -1922,20 +1922,41 @@ function loadProfile() {
   userProfile.name = userProfile.name || '';
   userProfile.aliases = userProfile.aliases || [];
   userProfile.context = userProfile.context || '';
+  // Auto-add connected account emails to aliases
+  if (accounts && accounts.length) {
+    accounts.forEach(a => {
+      if (a.email && !userProfile.aliases.includes(a.email)) {
+        userProfile.aliases.push(a.email);
+      }
+    });
+  }
 }
 
 function saveProfile() {
   userProfile.name = document.getElementById('profile-name').value.trim();
   userProfile.context = document.getElementById('profile-context').value.trim();
+  // aliases already updated via addAlias/removeAlias - just ensure connected accounts are included
+  accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
   localStorage.setItem('memail_profile', JSON.stringify(userProfile));
+  // Also save a default profile flag so we know it was explicitly saved
+  localStorage.setItem('memail_profile_saved', '1');
   closeProfile();
+  renderLifeEventsPanel();
   showToast('Profile saved!');
 }
 
 function openProfile() {
   loadProfile();
-  document.getElementById('profile-name').value = userProfile.name;
-  document.getElementById('profile-context').value = userProfile.context;
+  const nameEl = document.getElementById('profile-name');
+  const ctxEl = document.getElementById('profile-context');
+  if (nameEl) {
+    nameEl.value = userProfile.name;
+    nameEl.placeholder = userProfile.name ? '' : 'e.g. Srinath';
+  }
+  if (ctxEl) {
+    ctxEl.value = userProfile.context;
+    ctxEl.placeholder = userProfile.context ? '' : 'e.g. Family of 4 in Katy TX...';
+  }
   accounts.forEach(a => { if (!userProfile.aliases.includes(a.email)) userProfile.aliases.push(a.email); });
   renderAliases();
   showLifeEventsInProfile();
@@ -2115,6 +2136,12 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedKey) document.getElementById('api-key-input').value = savedKey;
   loadAccounts();
   loadProfile();
+  // Pre-populate defaults if profile never saved
+  if (!localStorage.getItem('memail_profile_saved')) {
+    if (!userProfile.name) userProfile.name = 'Srinath';
+    if (!userProfile.context) userProfile.context = 'Family of 4 living in Katy TX. Program Manager at HCLTech. Daughters: Shrutha (Harmony Public School, 7th grade), Shristhi (Olga Leonard Elementary). Spouse: Varsha. Bought home in Katy TX in 2022 so Zillow emails are casual browsing. Open to senior delivery manager or TPM roles.';
+    localStorage.setItem('memail_profile', JSON.stringify(userProfile));
+  }
   setTimeout(() => { renderLifeEventsPanel(); initDividers(); }, 500);
 });
 
