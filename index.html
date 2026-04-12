@@ -1734,7 +1734,7 @@ async function startSentScan() {
       const date = new Date(headers.find(h => h.name==='Date')?.value || msg.internalDate);
       const cat = isLifeEvent(subject);
       if (cat) {
-        addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:'', source:'sent-subject' });
+        addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:'', source:'sent-subject', msgId:msg.id });
         eventsFound++;
       }
     });
@@ -1752,7 +1752,7 @@ async function startSentScan() {
         const date = new Date(full.result.internalDate*1);
         const cat = isLifeEvent(subject + ' ' + body);
         if (cat) {
-          addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,120), source:'sent' });
+          addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,120), source:'sent', msgId:msg.id });
           eventsFound++;
         }
       } catch(e) { /* skip slow/failing emails */ }
@@ -1816,7 +1816,7 @@ async function startSentScan() {
           const date = new Date(full.result.internalDate*1);
           const cat = isLifeEvent(subject + ' ' + body);
           if (cat) {
-            addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,100), source:'inbox' });
+            addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,100), source:'inbox', msgId:msg.id });
             eventsFound++;
           }
         } catch(e) { /* skip */ }
@@ -2263,34 +2263,47 @@ function renderLifeEventsPanel() {
   const in7 = new Date(now.getTime() + 7*86400000);
   const in30 = new Date(now.getTime() + 30*86400000);
 
-  // Separate into buckets
+  // Separate into buckets — ONLY show next 30 days + manual items
   const urgent = [], upcoming = [], waiting = [], done = [];
+  const in60 = new Date(now.getTime() + 60*86400000);
 
   allEvents.forEach(ev => {
     if (ev.completed) { done.push(ev); return; }
     const d = ev.date ? new Date(ev.date) : null;
 
-    // Check if it has a completion signal in snippet
+    // Auto-complete events with completion signals in snippet
     const snippet = (ev.snippet || '').toLowerCase();
-    const completionWords = ['confirmed', 'accepted', 'filed', 'completed', 'approved', 'thank you for', 'successfully', 'e-file accepted', 'refund'];
+    const completionWords = ['confirmed', 'accepted', 'filed', 'completed', 'approved', 'thank you for', 'successfully', 'e-file accepted', 'your refund'];
     if (completionWords.some(w => snippet.includes(w)) && ev.source !== 'manual') {
       ev.autoCompleted = true;
       done.push(ev);
       return;
     }
 
+    // CRITICAL: skip events older than 30 days unless manual
     if (d && d < now) {
-      // Overdue — only show if action/financial/school (not old automotive/home)
-      if (['action','financial','school','medical'].includes(ev.category)) {
-        urgent.push(ev);
+      const daysOld = (now - d) / 86400000;
+      // Only show overdue if recent (added in last 7 days) or manual
+      const addedAt = ev.addedAt ? new Date(ev.addedAt) : null;
+      const recentlyAdded = addedAt && (now - addedAt) / 86400000 < 7;
+      if (ev.source === 'manual' || recentlyAdded) {
+        if (['action','financial','school','medical','family'].includes(ev.category)) {
+          urgent.push(ev);
+        }
       }
-    } else if (d && d <= in7) {
+      // Skip old auto-discovered overdue events
+      return;
+    }
+
+    if (d && d <= in7) {
       urgent.push(ev);
     } else if (d && d <= in30) {
       upcoming.push(ev);
-    } else if (!d || ev.source === 'manual') {
+    } else if (ev.source === 'manual' && (!d || d <= in60)) {
+      // Manual entries without dates go to tracking
       waiting.push(ev);
     }
+    // Events beyond 30 days — skip for now
   });
 
   // Sort each bucket by date
@@ -2349,20 +2362,37 @@ function renderLifeEventsPanel() {
 }
 
 function searchFromLifeEvent(title) {
-  // Extract key words from title for Gmail search
-  const stopWords = ['re:', 'fwd:', 'the', 'and', 'for', 'with', 'from', 'your', 'you', 'this', 'that'];
-  const words = title.toLowerCase()
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 3 && !stopWords.includes(w))
-    .slice(0, 4)
-    .join(' ');
-  const searchInput = document.getElementById('search-input');
-  if (searchInput) {
-    searchInput.value = words || title.slice(0,30);
-    document.getElementById('list-title').textContent = '"' + (words || title.slice(0,20)) + '"';
-    fetchEmails(words || title.slice(0,30), 10);
+  // Find the event to get its msgId
+  const mem = getMemory();
+  const ev = (mem.lifeEvents || []).find(e => e.title === title);
+  
+  if (ev && ev.msgId) {
+    // Open the exact email directly
+    openEmailById({ id: ev.msgId });
+    return;
   }
+  
+  // Fallback: if no msgId, use date-bounded search
+  // Strip forward/reply prefixes and common words
+  const stopWords = new Set(['re', 'fwd', 'fw', 'the', 'and', 'for', 'with', 'from', 'your', 'you', 'this', 'that', 'has', 'been', 'have', 'will', 'are', 'was']);
+  const cleaned = title
+    .replace(/^(re:|fwd?:|fw:)\s*/gi, '')
+    .replace(/[^a-zA-Z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !stopWords.has(w.toLowerCase()))
+    .slice(0, 3)
+    .join(' ');
+  
+  // Add date filter — only last 6 months
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const dateFilter = `after:${sixMonthsAgo.getFullYear()}/${sixMonthsAgo.getMonth()+1}/${sixMonthsAgo.getDate()}`;
+  
+  const query = cleaned ? `${cleaned} ${dateFilter}` : title.slice(0,20);
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) searchInput.value = cleaned || title.slice(0,20);
+  document.getElementById('list-title').textContent = '"' + (cleaned || title.slice(0,20)) + '"';
+  fetchEmails(query, 8);
 }
 
 
