@@ -80,7 +80,8 @@
   .auth-error { background: var(--red-light); color: var(--red-text); border-radius: var(--r-sm); padding: 10px 13px; font-size: 12.5px; margin-top: 10px; display: none; }
 
   /* ── APP SHELL ── */
-  #app { display: none; height: 100vh; display: none; grid-template-columns: 240px 320px 1fr; grid-template-rows: 52px 1fr; overflow: hidden; }
+  #app { display: none; height: 100vh; flex-direction: column; overflow: hidden; }
+  .app-body { display: flex; flex: 1; overflow: hidden; }
 
   /* ── TOPBAR ── */
   .topbar {
@@ -227,6 +228,11 @@
   .account-item-check { color: var(--accent); font-size: 14px; }
   .account-add { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; color: var(--accent-text); font-size: 12.5px; font-weight: 500; border-top: 0.5px solid var(--border); transition: background 0.1s; }
   .account-add:hover { background: var(--accent-light); }
+
+  /* draggable dividers */
+  .divider { width:4px; background:transparent; cursor:col-resize; flex-shrink:0; transition:background 0.15s; z-index:10; position:relative; }
+  .divider:hover, .divider.dragging { background:var(--accent); }
+  .divider::after { content:''; position:absolute; inset:-4px 0; }
 
   /* life events sidebar panel */
   .life-panel { margin-top:12px; border-top:0.5px solid var(--border); padding-top:12px; }
@@ -391,8 +397,9 @@
     </div>
   </div>
 
+  <div class="app-body" id="app-body">
   <!-- Sidebar -->
-  <div class="sidebar">
+  <div class="sidebar" id="sidebar-panel" style="width:240px;flex-shrink:0;overflow-y:auto;">
     <div class="nav-label">Mail</div>
     <div class="nav-item active" onclick="loadInbox()" id="nav-inbox">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="2" width="12" height="10" rx="1.5"/><path d="M1 5l6 4 6-4"/></svg>
@@ -459,8 +466,9 @@
     </div>
   </div>
 
+  <div class="divider" id="divider-1"></div>
   <!-- Email List -->
-  <div class="email-list">
+  <div class="email-list" id="emaillist-panel" style="width:320px;flex-shrink:0;overflow-y:auto;display:flex;flex-direction:column;">
     <div class="list-header">
       <div class="list-title" id="list-title">Inbox</div>
       <button class="btn-refresh" onclick="refreshCurrentView()">↻ Refresh</button>
@@ -470,8 +478,9 @@
     </div>
   </div>
 
+  <div class="divider" id="divider-2"></div>
   <!-- Reading Pane -->
-  <div class="reading-pane" id="reading-pane">
+  <div class="reading-pane" id="reading-panel" style="flex:1;min-width:280px;overflow-y:auto;">
     <div class="empty-state" id="empty-state">
       <div class="big">mem·ail</div>
       <div style="font-size:13px">Select an email to read</div>
@@ -524,6 +533,8 @@
     </div>
   </div>
 </div>
+
+</div><!-- end app-body -->
 
 <!-- Toast -->
 <!-- MEMORY SETUP OVERLAY -->
@@ -2104,7 +2115,7 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedKey) document.getElementById('api-key-input').value = savedKey;
   loadAccounts();
   loadProfile();
-  setTimeout(renderLifeEventsPanel, 500);
+  setTimeout(() => { renderLifeEventsPanel(); initDividers(); }, 500);
 });
 
 
@@ -2227,7 +2238,7 @@ function renderLifeEventsPanel() {
     const escapedTitle = ev.title.replace(/'/g, "\'").replace(/"/g, '&quot;');
     const noteIndicator = ev.note ? ' 📝' : '';
     return `
-      <div class="life-event-item">
+      <div class="life-event-item" onclick="searchFromLifeEvent('${escapedTitle}')" style="cursor:pointer">
         <span class="life-event-icon">${icon}</span>
         <div class="life-event-info">
           <div class="life-event-name">${titleSafe}${noteIndicator}</div>
@@ -2267,6 +2278,67 @@ function renderLifeEventsPanel() {
   }
 
   container.innerHTML = html;
+}
+
+function searchFromLifeEvent(title) {
+  // Extract key words from title for Gmail search
+  const stopWords = ['re:', 'fwd:', 'the', 'and', 'for', 'with', 'from', 'your', 'you', 'this', 'that'];
+  const words = title.toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !stopWords.includes(w))
+    .slice(0, 4)
+    .join(' ');
+  const searchInput = document.getElementById('search-input');
+  if (searchInput) {
+    searchInput.value = words || title.slice(0,30);
+    document.getElementById('list-title').textContent = '"' + (words || title.slice(0,20)) + '"';
+    fetchEmails(words || title.slice(0,30), 10);
+  }
+}
+
+
+// ── DRAGGABLE PANEL DIVIDERS ──
+function initDividers() {
+  setupDivider('divider-1', 'sidebar-panel', 'emaillist-panel', 160, 400, 200, 500);
+  setupDivider('divider-2', 'emaillist-panel', 'reading-panel', 200, 500, 280, 9999);
+}
+
+function setupDivider(dividerId, leftId, rightId, leftMin, leftMax, rightMin, rightMax) {
+  const divider = document.getElementById(dividerId);
+  const leftEl = document.getElementById(leftId);
+  const rightEl = document.getElementById(rightId);
+  if (!divider || !leftEl || !rightEl) return;
+
+  let dragging = false;
+  let startX = 0;
+  let startLeftW = 0;
+
+  divider.addEventListener('mousedown', e => {
+    dragging = true;
+    startX = e.clientX;
+    startLeftW = leftEl.offsetWidth;
+    divider.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const newW = Math.min(leftMax, Math.max(leftMin, startLeftW + dx));
+    leftEl.style.width = newW + 'px';
+    leftEl.style.flexShrink = '0';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
 }
 
 function toggleDoneSection() {
