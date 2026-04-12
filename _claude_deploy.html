@@ -228,6 +228,34 @@
   .account-add { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; color: var(--accent-text); font-size: 12.5px; font-weight: 500; border-top: 0.5px solid var(--border); transition: background 0.1s; }
   .account-add:hover { background: var(--accent-light); }
 
+  /* life events sidebar panel */
+  .life-panel { margin-top:12px; border-top:0.5px solid var(--border); padding-top:12px; }
+  .life-panel-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:8px; }
+  .life-panel-title { font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--ink-3); }
+  .life-panel-add { width:20px;height:20px;border-radius:50%;background:var(--accent);color:white;border:none;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;flex-shrink:0; }
+  .life-section-label { font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;margin:8px 0 4px;padding:2px 6px;border-radius:4px;display:inline-block; }
+  .life-section-urgent { background:#fee2e2;color:#dc2626; }
+  .life-section-upcoming { background:#dbeafe;color:#1d4ed8; }
+  .life-section-waiting { background:#fef3c7;color:#b45309; }
+  .life-section-done { background:#f1f5f9;color:#64748b; }
+  .life-event-item { display:flex;align-items:flex-start;gap:6px;padding:5px 4px;border-radius:6px;cursor:pointer;transition:background 0.1s; }
+  .life-event-item:hover { background:var(--surface-2); }
+  .life-event-icon { font-size:12px;flex-shrink:0;margin-top:1px; }
+  .life-event-info { flex:1;min-width:0; }
+  .life-event-name { font-size:11px;font-weight:500;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .life-event-meta { font-size:10px;color:var(--ink-3);margin-top:1px; }
+  .life-event-actions { display:none;gap:3px;margin-top:4px; }
+  .life-event-item:hover .life-event-actions { display:flex; }
+  .life-event-btn { font-size:9px;padding:2px 5px;border-radius:3px;border:0.5px solid var(--border-2);background:var(--surface-3);color:var(--ink-2);cursor:pointer;white-space:nowrap; }
+  .life-event-btn:hover { background:var(--accent-light);color:var(--accent-text);border-color:var(--accent-text); }
+  .life-event-btn.done-btn { background:var(--accent-light);color:var(--accent-text); }
+  .life-quick-add { display:none;margin-top:8px;background:var(--surface-2);border-radius:8px;padding:8px; }
+  .life-quick-add.open { display:block; }
+  .life-quick-add input { width:100%;border:0.5px solid var(--border-2);border-radius:5px;padding:5px 7px;font-family:var(--font-ui);font-size:11px;background:var(--surface-3);color:var(--ink);box-sizing:border-box;margin-bottom:4px; }
+  .life-quick-add-row { display:flex;gap:4px; }
+  .life-quick-add-row input { margin-bottom:0; }
+  .life-quick-add-submit { background:var(--accent);color:white;border:none;border-radius:5px;padding:5px 10px;font-family:var(--font-ui);font-size:11px;cursor:pointer;white-space:nowrap; }
+
   /* memory store */
   .memory-setup-overlay { position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:200;display:none;align-items:center;justify-content:center; }
   .memory-setup-overlay.open { display:flex; }
@@ -411,6 +439,22 @@
       <div class="mem-head">Active context</div>
       <div class="mem-chips" id="context-chips">
         <span class="loading-chips">Loading from your inbox…</span>
+      </div>
+
+      <!-- Life Events Panel -->
+      <div class="life-panel" id="life-panel">
+        <div class="life-panel-header">
+          <span class="life-panel-title">Life Events &amp; Actions</span>
+          <button class="life-panel-add" onclick="toggleQuickAdd()" title="Add something to track">+</button>
+        </div>
+        <div class="life-quick-add" id="life-quick-add">
+          <input type="text" id="quick-add-text" placeholder="Track something... e.g. Dentist for Shrutha" />
+          <div class="life-quick-add-row">
+            <input type="date" id="quick-add-date" style="flex:1" />
+            <button class="life-quick-add-submit" onclick="submitQuickAdd()">Add</button>
+          </div>
+        </div>
+        <div id="life-events-list"></div>
       </div>
     </div>
   </div>
@@ -634,6 +678,7 @@ async function launchApp() {
   document.getElementById('app').style.display = 'grid';
   await loadUserProfile();
   renderLifeEventsSidebar();
+  renderLifeEventsPanel();
   await loadInbox();
 }
 
@@ -1701,6 +1746,48 @@ async function startSentScan() {
       if (bi % 5 === 0) updateScanMsg(`Scanning email content... ${bi+1}/20`, 72 + bi);
     }
 
+    // Deep scan school emails from sent
+    updateScanMsg('Scanning school emails deeply...', 78);
+    const schoolMsgs = details.filter(msg => {
+      const headers = msg.payload?.headers || [];
+      const from = headers.find(h => h.name === 'To')?.value || '';
+      const subj = headers.find(h => h.name === 'Subject')?.value || '';
+      return from.includes('harmonytx') || from.includes('olga') ||
+             subj.toLowerCase().includes('harmony') || subj.toLowerCase().includes('staar') ||
+             subj.toLowerCase().includes('shrutha') || subj.toLowerCase().includes('shristhi');
+    });
+    for (const msg of schoolMsgs.slice(0,10)) {
+      const headers = msg.payload?.headers || [];
+      const subj = headers.find(h => h.name === 'Subject')?.value || '';
+      const date = new Date(headers.find(h => h.name === 'Date')?.value || msg.internalDate);
+      await scanSchoolEmail(msg.id, subj, date.toISOString());
+    }
+
+    // Also scan incoming school emails
+    updateScanMsg('Scanning incoming school emails...', 80);
+    try {
+      const schoolInResp = await Promise.race([
+        gapi.client.gmail.users.messages.list({
+          userId:'me',
+          q:'in:inbox from:harmonytx.org OR from:harmonyschools.org OR subject:STAAR OR subject:Shrutha OR subject:Shristhi',
+          maxResults: 20
+        }),
+        new Promise((_,r) => setTimeout(() => r(new Error('t')), 8000))
+      ]);
+      const schoolInMsgs = schoolInResp.result.messages || [];
+      for (const msg of schoolInMsgs.slice(0,15)) {
+        try {
+          const fullP = gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+          const fullT = new Promise((_,r) => setTimeout(() => r(new Error('t')), 6000));
+          const full = await Promise.race([fullP, fullT]);
+          const headers = full.result.payload?.headers || [];
+          const subj = headers.find(h => h.name === 'Subject')?.value || '';
+          const date = new Date(full.result.internalDate*1);
+          await scanSchoolEmail(msg.id, subj, date.toISOString());
+        } catch(e) { /* skip */ }
+      }
+    } catch(e) { console.error('School scan error:', e); }
+
     // Scan recent incoming emails too
     updateScanMsg('Scanning incoming emails for life events...', 82);
     try {
@@ -1770,6 +1857,7 @@ JSON: {"insight":"...","topRelationship":"..."}`);
 function closeMemorySetup() {
   document.getElementById('memory-setup-overlay').classList.remove('open');
   renderLifeEventsSidebar();
+  renderLifeEventsPanel();
   openProfile();
   showLifeEventsInProfile();
 }
@@ -2016,7 +2104,232 @@ window.addEventListener('DOMContentLoaded', () => {
   if (savedKey) document.getElementById('api-key-input').value = savedKey;
   loadAccounts();
   loadProfile();
+  setTimeout(renderLifeEventsPanel, 500);
 });
+
+
+// ── LIFE EVENTS SIDEBAR PANEL ──
+
+const CATEGORY_ICONS = {
+  medical: '🏥', automotive: '🚗', financial: '💰',
+  family: '🎂', home: '🏠', school: '🎓', action: '🔔', manual: '📌'
+};
+
+function toggleQuickAdd() {
+  const el = document.getElementById('life-quick-add');
+  if (el) el.classList.toggle('open');
+  const input = document.getElementById('quick-add-text');
+  if (input) input.focus();
+}
+
+function submitQuickAdd() {
+  const text = document.getElementById('quick-add-text')?.value.trim();
+  const dateVal = document.getElementById('quick-add-date')?.value;
+  if (!text) return;
+
+  // Auto-detect category from text
+  const lower = text.toLowerCase();
+  let cat = 'manual';
+  if (['doctor','dentist','hospital','clinic','health','vaccination','checkup'].some(k => lower.includes(k))) cat = 'medical';
+  else if (['car','volvo','service','oil','tire','vehicle','registration'].some(k => lower.includes(k))) cat = 'automotive';
+  else if (['tax','insurance','bill','payment','subscription','renewal'].some(k => lower.includes(k))) cat = 'financial';
+  else if (['birthday','anniversary','wedding','party','rsvp'].some(k => lower.includes(k))) cat = 'family';
+  else if (['staar','school','homework','field trip','teacher','grade','enrollment','test','exam','mock'].some(k => lower.includes(k))) cat = 'school';
+  else if (['hoa','pest','plumber','electrician','repair','mortgage'].some(k => lower.includes(k))) cat = 'home';
+  else if (['deadline','reminder','call','email','respond','follow up','urgent'].some(k => lower.includes(k))) cat = 'action';
+
+  addLifeEvent({
+    title: text,
+    category: cat,
+    date: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+    snippet: 'Manually added',
+    source: 'manual'
+  });
+
+  document.getElementById('quick-add-text').value = '';
+  document.getElementById('quick-add-date').value = '';
+  document.getElementById('life-quick-add').classList.remove('open');
+  renderLifeEventsPanel();
+  showToast('Added to your life events!');
+}
+
+function markEventDone(title) {
+  const mem = getMemory();
+  if (!mem.lifeEvents) return;
+  const ev = mem.lifeEvents.find(e => e.title === title);
+  if (ev) { ev.completed = true; ev.completedAt = new Date().toISOString(); }
+  localStorage.setItem('memail_persistent_memory', JSON.stringify(mem));
+  renderLifeEventsPanel();
+  showToast('Marked as done!');
+}
+
+function addEventNote(title) {
+  const note = prompt('Add a note for: ' + title.slice(0,40));
+  if (!note) return;
+  const mem = getMemory();
+  const ev = mem.lifeEvents?.find(e => e.title === title);
+  if (ev) { ev.note = note; ev.updatedAt = new Date().toISOString(); }
+  localStorage.setItem('memail_persistent_memory', JSON.stringify(mem));
+  renderLifeEventsPanel();
+  showToast('Note saved!');
+}
+
+function renderLifeEventsPanel() {
+  const container = document.getElementById('life-events-list');
+  if (!container) return;
+
+  const mem = getMemory();
+  const allEvents = mem.lifeEvents || [];
+  const now = new Date();
+  const in7 = new Date(now.getTime() + 7*86400000);
+  const in30 = new Date(now.getTime() + 30*86400000);
+
+  // Separate into buckets
+  const urgent = [], upcoming = [], waiting = [], done = [];
+
+  allEvents.forEach(ev => {
+    if (ev.completed) { done.push(ev); return; }
+    const d = ev.date ? new Date(ev.date) : null;
+
+    // Check if it has a completion signal in snippet
+    const snippet = (ev.snippet || '').toLowerCase();
+    const completionWords = ['confirmed', 'accepted', 'filed', 'completed', 'approved', 'thank you for', 'successfully', 'e-file accepted', 'refund'];
+    if (completionWords.some(w => snippet.includes(w)) && ev.source !== 'manual') {
+      ev.autoCompleted = true;
+      done.push(ev);
+      return;
+    }
+
+    if (d && d < now) {
+      // Overdue — only show if action/financial/school (not old automotive/home)
+      if (['action','financial','school','medical'].includes(ev.category)) {
+        urgent.push(ev);
+      }
+    } else if (d && d <= in7) {
+      urgent.push(ev);
+    } else if (d && d <= in30) {
+      upcoming.push(ev);
+    } else if (!d || ev.source === 'manual') {
+      waiting.push(ev);
+    }
+  });
+
+  // Sort each bucket by date
+  const byDate = (a,b) => new Date(a.date||0) - new Date(b.date||0);
+  urgent.sort(byDate); upcoming.sort(byDate);
+
+  function eventHTML(ev, showDone=true) {
+    const icon = CATEGORY_ICONS[ev.category] || '📌';
+    const d = ev.date ? new Date(ev.date) : null;
+    const dateStr = d ? d.toLocaleDateString([], {month:'short', day:'numeric'}) : '';
+    const isOverdue = d && d < now && !ev.completed;
+    const titleSafe = esc(ev.title.slice(0,35));
+    const escapedTitle = ev.title.replace(/'/g, "\'").replace(/"/g, '&quot;');
+    const noteIndicator = ev.note ? ' 📝' : '';
+    return `
+      <div class="life-event-item">
+        <span class="life-event-icon">${icon}</span>
+        <div class="life-event-info">
+          <div class="life-event-name">${titleSafe}${noteIndicator}</div>
+          <div class="life-event-meta">${isOverdue ? '⚡ overdue · ' : ''}${dateStr}</div>
+          <div class="life-event-actions">
+            ${showDone ? `<button class="life-event-btn done-btn" onclick="markEventDone('${escapedTitle}')">✅ Done</button>` : ''}
+            <button class="life-event-btn" onclick="addEventNote('${escapedTitle}')">📝 Note</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  let html = '';
+
+  if (urgent.length) {
+    html += '<div class="life-section-label life-section-urgent">⚡ Urgent</div>';
+    html += urgent.slice(0,5).map(e => eventHTML(e)).join('');
+  }
+
+  if (upcoming.length) {
+    html += '<div class="life-section-label life-section-upcoming">📅 Upcoming</div>';
+    html += upcoming.slice(0,8).map(e => eventHTML(e)).join('');
+  }
+
+  if (waiting.length) {
+    html += '<div class="life-section-label life-section-waiting">⏳ Tracking</div>';
+    html += waiting.slice(0,5).map(e => eventHTML(e)).join('');
+  }
+
+  if (done.length) {
+    html += `<div class="life-section-label life-section-done" style="cursor:pointer" onclick="toggleDoneSection()">✅ Done (${done.length})</div>`;
+    html += `<div id="done-section" style="display:none">${done.slice(0,5).map(e => eventHTML(e, false)).join('')}</div>`;
+  }
+
+  if (!html) {
+    html = '<div style="font-size:11px;color:var(--ink-3);padding:8px 4px;">No life events yet. Run profile scan or tap + to add.</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function toggleDoneSection() {
+  const el = document.getElementById('done-section');
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ── DEEP SCHOOL EMAIL SCAN ──
+// Called during sent scan for school domain emails
+async function scanSchoolEmail(msgId, subject, date) {
+  try {
+    const full = await Promise.race([
+      gapi.client.gmail.users.messages.get({ userId:'me', id:msgId, format:'full' }),
+      new Promise((_,r) => setTimeout(() => r(new Error('timeout')), 6000))
+    ]);
+    const body = extractBody(full.result)
+      .replace(/<[^>]+>/g,' ')
+      .replace(/\s+/g,' ')
+      .trim()
+      .slice(0, 3000); // 3000 chars for school emails
+
+    // Extract dates from body text
+    const datePatterns = [
+      /(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?/gi,
+      /\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/g,
+      /(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+\d{1,2}/gi
+    ];
+
+    const schoolKeywords = [
+      { words: ['staar', 'state of texas assessment'], category: 'school', prefix: 'STAAR Test' },
+      { words: ['mock test', 'practice test', 'mock staar'], category: 'school', prefix: 'Mock Test' },
+      { words: ['field trip'], category: 'school', prefix: 'Field Trip' },
+      { words: ['permission slip', 'permission form'], category: 'school', prefix: 'Permission Slip Due' },
+      { words: ['report card', 'progress report'], category: 'school', prefix: 'Report Card' },
+      { words: ['parent teacher', 'conference'], category: 'school', prefix: 'Parent Conference' },
+      { words: ['school pictures', 'picture day'], category: 'school', prefix: 'Picture Day' },
+      { words: ['early release', 'no school', 'holiday'], category: 'school', prefix: 'School Closure' },
+      { words: ['ela', 'math assessment', 'reading test'], category: 'school', prefix: 'Assessment' }
+    ];
+
+    const bodyLower = body.toLowerCase();
+    for (const kw of schoolKeywords) {
+      if (kw.words.some(w => bodyLower.includes(w))) {
+        // Try to find a date near the keyword
+        let foundDate = date;
+        for (const pattern of datePatterns) {
+          const matches = body.match(pattern);
+          if (matches && matches.length) {
+            const parsed = new Date(matches[0] + ' ' + new Date().getFullYear());
+            if (!isNaN(parsed.getTime())) { foundDate = parsed.toISOString(); break; }
+          }
+        }
+        addLifeEvent({
+          title: kw.prefix + ' — ' + subject.slice(0,30),
+          category: kw.category,
+          date: foundDate,
+          snippet: body.slice(0,150),
+          source: 'school-newsletter'
+        });
+      }
+    }
+  } catch(e) { /* skip */ }
+}
 
 </script>
 </body>
