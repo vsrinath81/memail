@@ -1681,11 +1681,14 @@ async function startSentScan() {
       }
     });
 
-    // Deep body scan on top 40 sent emails
+    // Deep body scan on top 20 sent emails (reduced from 40 for speed)
     updateScanMsg('Extracting life events from email content...', 72);
-    for (const msg of details.slice(0,40)) {
+    for (let bi = 0; bi < Math.min(20, details.length); bi++) {
+      const msg = details[bi];
       try {
-        const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+        const fullPromise = gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+        const bodyTimeout = new Promise((_,r) => setTimeout(() => r(new Error('timeout')), 5000));
+        const full = await Promise.race([fullPromise, bodyTimeout]);
         const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,500);
         const subject = full.result.payload?.headers?.find(h=>h.name==='Subject')?.value || '';
         const date = new Date(full.result.internalDate*1);
@@ -1694,7 +1697,8 @@ async function startSentScan() {
           addLifeEvent({ title:subject.slice(0,60), category:cat, date:date.toISOString(), snippet:body.slice(0,120), source:'sent' });
           eventsFound++;
         }
-      } catch(e) { /* skip */ }
+      } catch(e) { /* skip slow/failing emails */ }
+      if (bi % 5 === 0) updateScanMsg(`Scanning email content... ${bi+1}/20`, 72 + bi);
     }
 
     // Scan recent incoming emails too
@@ -1702,9 +1706,11 @@ async function startSentScan() {
     try {
       const inResp = await gapi.client.gmail.users.messages.list({ userId:'me', q:'in:inbox', maxResults:50 });
       const inMsgs = inResp.result.messages || [];
-      for (const msg of inMsgs.slice(0,20)) {
+      for (const msg of inMsgs.slice(0,10)) {
         try {
-          const full = await gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+          const fullP = gapi.client.gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
+          const fullT = new Promise((_,r) => setTimeout(() => r(new Error('t')), 4000));
+          const full = await Promise.race([fullP, fullT]);
           const body = extractBody(full.result).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,400);
           const subject = full.result.payload?.headers?.find(h=>h.name==='Subject')?.value || '';
           const date = new Date(full.result.internalDate*1);
